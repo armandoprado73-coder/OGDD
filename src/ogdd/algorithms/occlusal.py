@@ -1,10 +1,15 @@
 """
 OGDD Occlusal Plane Estimator
 
-Version 0.2
+Version 0.3
 
-Includes automatic alignment before
-plane estimation.
+Complete analysis pipeline:
+
+Alignment
+Region extraction
+Plane fitting
+Confidence evaluation
+Standard result output
 """
 
 from __future__ import annotations
@@ -16,14 +21,18 @@ import numpy as np
 from .alignment import Alignment
 from .region import RegionSelector
 from .plane_fitting import PlaneFitter
+from .confidence import PlaneConfidence
 
-from ..geometry.plane import Plane
+
+from ..core.result import (
+    AnalysisResult
+)
 
 
 
 class OcclusalPlaneEstimator:
     """
-    Automatic candidate occlusal plane estimator.
+    Complete occlusal plane analysis.
     """
 
 
@@ -42,15 +51,9 @@ class OcclusalPlaneEstimator:
     def compute(
         self,
         points: np.ndarray
-    ) -> Plane:
+    ) -> AnalysisResult:
         """
-        Estimate occlusal plane.
-
-        Steps:
-
-        1. Align geometry.
-        2. Extract upper region.
-        3. Fit plane.
+        Execute full pipeline.
         """
 
 
@@ -75,7 +78,7 @@ class OcclusalPlaneEstimator:
         if len(selected_points) < 3:
 
             raise ValueError(
-                "Insufficient occlusal points."
+                "Insufficient points."
             )
 
 
@@ -84,4 +87,36 @@ class OcclusalPlaneEstimator:
         )
 
 
-        return plane
+        confidence = PlaneConfidence.evaluate(
+            plane,
+            selected_points
+        )
+
+
+        result = AnalysisResult(
+            value=plane,
+            algorithm="OcclusalPlaneEstimator",
+            version="0.3",
+            confidence=confidence
+        )
+
+
+        result.add_metadata(
+            "points_used",
+            len(selected_points)
+        )
+
+
+        result.add_metadata(
+            "top_percentage",
+            self.top_percentage
+        )
+
+
+        result.add_metadata(
+            "alignment_origin",
+            alignment.origin
+        )
+
+
+        return result
