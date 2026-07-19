@@ -45,3 +45,79 @@ OGDD is designed to provide:
 OGDD is designed as a modular Python SDK.
 
 The architecture separates the mathematical core from visualization platforms.
+
+             Blender
+                |
+          OGDD Add-on
+                |
+    -------------------------
+          OGDD SDK
+    -------------------------
+                |
+    Computational Geometry
+                |
+             NumPy
+
+   
+The core library does not depend on Blender.
+
+Blender is considered only one possible visualization environment.
+
+---
+
+# Current Development Status
+
+## Version
+
+     
+## Development Phase
+
+Foundation stage.
+
+Current objectives:
+
+- Project infrastructure.
+- Core data structures.
+- Mesh representation.
+- Basic geometry utilities.
+
+---
+
+# Planned Features
+
+## Geometry Engine
+
+- Mesh processing.
+- Surface analysis.
+- Normal calculation.
+- Curvature estimation.
+- Spatial transformations.
+
+## Dental Analysis
+
+- Occlusal surface detection.
+- Anatomical landmark detection.
+- Cusp identification.
+- Occlusal reference plane calculation.
+- Confidence estimation.
+
+## Future Development
+
+- Curve of Spee analysis.
+- Curve of Wilson analysis.
+- Dental symmetry analysis.
+- Digital articulation tools.
+- Research-oriented measurements.
+
+---
+
+# Installation
+
+Development installation:
+
+```bash
+git clone https://github.com/armandoprado73-coder/OGDD.git
+
+cd OGDD
+
+pip install -e .
