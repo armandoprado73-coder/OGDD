@@ -5,9 +5,26 @@ from ..geometry.mesh import Mesh
 
 
 class MeshLoader(ABC):
-    """Base class for all mesh loaders."""
+    """
+    Abstract base class for loading meshes.
+
+    Every mesh loader in OGDD must implement this interface,
+    regardless of the file format or data source.
+    """
 
     @abstractmethod
     def load(self, path: Path) -> Mesh:
-        """Load a mesh from a file."""
+        """
+        Load a mesh from the given path.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the mesh file.
+
+        Returns
+        -------
+        Mesh
+            The loaded mesh.
+        """
         raise NotImplementedError
