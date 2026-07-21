@@ -1,6 +1,5 @@
 """
 OGDD Occlusal Plane Estimator v0.3 Tests
-
 Tests complete analysis pipeline.
 """
 
@@ -19,40 +18,40 @@ from ogdd.geometry.plane import (
 )
 
 
-
 def create_occlusal_surface():
+    """Create a simple synthetic occlusal surface for testing."""
 
     return np.array(
         [
-            [0,0,10],
-            [10,0,10],
-            [0,10,10],
-            [10,10,10],
-            [5,5,10],
+            [0, 0, 10],
+            [10, 0, 10],
+            [0, 10, 10],
+            [10, 10, 10],
+            [5, 5, 10],
 
-            [0,0,1],
-            [10,10,2],
-            [5,2,3],
+            [0, 0, 1],
+            [10, 10, 2],
+            [5, 2, 3],
         ],
-        dtype=float
+        dtype=float,
     )
 
+
+def create_result(top_percentage=40):
+    """Run the occlusal plane estimator on the synthetic dataset."""
+
+    estimator = OcclusalPlaneEstimator(
+        top_percentage=top_percentage
+    )
+
+    return estimator.compute(
+        create_occlusal_surface()
+    )
 
 
 def test_returns_analysis_result():
 
-    points = create_occlusal_surface()
-
-
-    estimator = OcclusalPlaneEstimator(
-        top_percentage=40
-    )
-
-
-    result = estimator.compute(
-        points
-    )
-
+    result = create_result()
 
     assert isinstance(
         result,
@@ -60,19 +59,9 @@ def test_returns_analysis_result():
     )
 
 
-
 def test_result_contains_plane():
 
-    points = create_occlusal_surface()
-
-
-    result = (
-        OcclusalPlaneEstimator(
-            top_percentage=40
-        )
-        .compute(points)
-    )
-
+    result = create_result()
 
     assert isinstance(
         result.value,
@@ -80,51 +69,20 @@ def test_result_contains_plane():
     )
 
 
-
 def test_result_contains_confidence():
 
-    points = create_occlusal_surface()
+    result = create_result()
 
-
-    result = (
-        OcclusalPlaneEstimator(
-            top_percentage=40
-        )
-        .compute(points)
-    )
-
-
-    assert (
-        result.confidence
-        is not None
-    )
-
+    assert result.confidence is not None
 
 
 def test_result_metadata():
 
-    points = create_occlusal_surface()
+    result = create_result()
 
+    assert "points_used" in result.metadata
 
-    result = (
-        OcclusalPlaneEstimator(
-            top_percentage=40
-        )
-        .compute(points)
-    )
-
-
-    assert (
-        "points_used"
-        in result.metadata
-    )
-
-
-    assert (
-        "top_percentage"
-        in result.metadata
-    )
-
+    assert "top_percentage" in result.metadata
 
 
 def test_pipeline_with_translated_model():
@@ -141,12 +99,10 @@ def test_pipeline_with_translated_model():
         )
     )
 
-
     result = (
         OcclusalPlaneEstimator()
         .compute(points)
     )
-
 
     assert isinstance(
         result.value,
