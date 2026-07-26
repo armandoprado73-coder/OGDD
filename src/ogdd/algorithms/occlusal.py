@@ -1,41 +1,39 @@
 """
 OGDD Occlusal Plane Estimator
 
-Version 0.3
+Version 0.4
 
 Complete analysis pipeline:
 
-Alignment
 Region extraction
 Plane fitting
 Confidence evaluation
 Standard result output
+
+The estimator operates in the input
+coordinate system.
+
+The Z axis is considered the vertical
+reference direction for region selection.
 """
 
 from __future__ import annotations
 
-
 import numpy as np
 
-
-from .alignment import Alignment
 from .region import RegionSelector
 from .plane_fitting import PlaneFitter
 from .confidence import PlaneConfidence
-
 
 from ..core.result import (
     AnalysisResult
 )
 
 
-
 class OcclusalPlaneEstimator:
     """
     Complete occlusal plane analysis.
     """
-
-
 
     def __init__(
         self,
@@ -47,29 +45,36 @@ class OcclusalPlaneEstimator:
         )
 
 
-
     def compute(
         self,
         points: np.ndarray
     ) -> AnalysisResult:
         """
-        Execute full pipeline.
+        Execute full occlusal plane analysis.
+
+        The input coordinate system is preserved.
+
+        The Z axis is used as the vertical
+        reference direction for selecting
+        the highest points.
         """
 
-
-        alignment = Alignment.compute(
-            points
+        points = np.asarray(
+            points,
+            dtype=float
         )
 
 
-        aligned_points = (
-            alignment.points
-        )
+        if points.ndim != 2 or points.shape[1] != 3:
+
+            raise ValueError(
+                "Points must have shape (N,3)"
+            )
 
 
         selected_points = (
             RegionSelector.select_top_percentage(
-                aligned_points,
+                points,
                 self.top_percentage
             )
         )
@@ -96,7 +101,7 @@ class OcclusalPlaneEstimator:
         result = AnalysisResult(
             value=plane,
             algorithm="OcclusalPlaneEstimator",
-            version="0.3",
+            version="0.4",
             confidence=confidence
         )
 
@@ -114,8 +119,8 @@ class OcclusalPlaneEstimator:
 
 
         result.add_metadata(
-            "alignment_origin",
-            alignment.origin
+            "coordinate_system",
+            "input"
         )
 
 

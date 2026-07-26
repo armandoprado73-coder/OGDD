@@ -48,9 +48,12 @@ def test_occlusal_estimation_basic():
     )
 
 
-    plane = estimator.compute(
+    result = estimator.compute(
         points
     )
+
+
+    plane = result.value
 
 
     assert np.isclose(
@@ -82,9 +85,12 @@ def test_occlusal_estimation_after_translation():
     )
 
 
-    plane = estimator.compute(
+    result = estimator.compute(
         moved_points
     )
+
+
+    plane = result.value
 
 
     assert np.isclose(
@@ -127,9 +133,12 @@ def test_occlusal_estimation_rotated_model():
     )
 
 
-    plane = estimator.compute(
+    result = estimator.compute(
         rotated_points
     )
+
+
+    plane = result.value
 
 
     assert np.isclose(

@@ -144,3 +144,16 @@ class Transform:
 
 
         return transformed[:, :3]
+
+    def inverse(
+        self
+    ) -> "Transform":
+        """
+        Return the inverse transformation.
+        """
+
+        return Transform(
+            np.linalg.inv(
+                self.matrix
+            )
+        )

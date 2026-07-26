@@ -1,7 +1,8 @@
 """
-OGDD Confidence Metrics
+OGDD Plane Confidence Evaluation
 
-Evaluation tools for geometric algorithms.
+Evaluates the quality of a fitted plane
+using distances from points to the plane.
 """
 
 from __future__ import annotations
@@ -10,32 +11,36 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..geometry.plane import Plane
-
+from ogdd.geometry.plane import Plane
 
 
 @dataclass
 class ConfidenceResult:
     """
-    Quality metrics for a geometric result.
+    Result of plane confidence evaluation.
+
+    Parameters
+    ----------
+    mean_error:
+        Mean absolute distance of the points
+        from the fitted plane.
+
+    point_count:
+        Number of points used for evaluation.
+
+    score:
+        Confidence score between 0 and 1.
     """
 
     mean_error: float
-
-    max_error: float
-
     point_count: int
-
     score: float
-
 
 
 class PlaneConfidence:
     """
-    Evaluates plane fitting quality.
+    Evaluate the quality of a fitted plane.
     """
-
-
 
     @staticmethod
     def evaluate(
@@ -43,7 +48,7 @@ class PlaneConfidence:
         points: np.ndarray
     ) -> ConfidenceResult:
         """
-        Calculate plane confidence.
+        Evaluate plane quality from point-to-plane distances.
         """
 
         points = np.asarray(
@@ -51,50 +56,38 @@ class PlaneConfidence:
             dtype=float
         )
 
-
-        if points.ndim != 2:
-
+        if points.ndim != 2 or points.shape[1] != 3:
             raise ValueError(
-                "Points must be 2D."
+                "Points must have shape (N, 3)"
             )
 
+        if len(points) == 0:
+            raise ValueError(
+                "At least one point is required"
+            )
 
         distances = np.array(
             [
-                abs(
-                    plane.distance(point)
-                )
+                plane.distance(point)
                 for point in points
-            ]
+            ],
+            dtype=float
         )
-
 
         mean_error = float(
             np.mean(distances)
         )
 
-
-        max_error = float(
-            np.max(distances)
+        point_count = int(
+            len(points)
         )
 
-
-        point_count = len(points)
-
-
-        # Simple first confidence model.
-        #
-        # Lower error = higher score.
-        #
-
-        score = 1 / (
-            1 + mean_error
+        score = float(
+            1.0 / (1.0 + mean_error)
         )
-
 
         return ConfidenceResult(
             mean_error=mean_error,
-            max_error=max_error,
             point_count=point_count,
             score=score
         )

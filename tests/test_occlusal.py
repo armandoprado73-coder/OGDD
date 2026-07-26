@@ -12,7 +12,6 @@ from ogdd.algorithms.occlusal import (
 )
 
 
-
 def test_occlusal_plane_horizontal_surface():
     """
     Test flat dental-like surface.
@@ -42,9 +41,12 @@ def test_occlusal_plane_horizontal_surface():
     )
 
 
-    plane = estimator.compute(
+    result = estimator.compute(
         points
     )
+
+
+    plane = result.value
 
 
     assert np.isclose(
@@ -72,9 +74,12 @@ def test_occlusal_plane_point():
     )
 
 
-    plane = estimator.compute(
+    result = estimator.compute(
         points
     )
+
+
+    plane = result.value
 
 
     assert np.allclose(

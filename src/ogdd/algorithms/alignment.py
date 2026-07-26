@@ -32,7 +32,8 @@ class AlignmentResult:
     rotation: np.ndarray
 
     origin: np.ndarray
-
+    
+    transform: Transform
 
 
 class Alignment:
@@ -99,5 +100,6 @@ class Alignment:
         return AlignmentResult(
             points=aligned_points,
             rotation=rotation,
-            origin=origin
+            origin=origin,
+            transform=transform
         )

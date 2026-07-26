@@ -100,10 +100,11 @@ def test_pipeline_with_translated_model():
     )
 
     result = (
-        OcclusalPlaneEstimator()
+        OcclusalPlaneEstimator(
+            top_percentage=40
+        )
         .compute(points)
     )
-
     assert isinstance(
         result.value,
         Plane

@@ -125,3 +125,37 @@ class Plane:
         )
 
         return point - distance * self.normal
+
+    def transform(
+        self,
+        transform
+    ) -> "Plane":
+        """
+        Transform plane to another coordinate system.
+
+        The plane point is transformed as a point.
+        The plane normal is transformed as a vector.
+        """
+
+        transformed_point = transform.apply(
+            self.point.reshape(1,3)
+        )[0]
+
+
+        rotation = transform.matrix[
+            :3,
+            :3
+        ]
+
+
+        transformed_normal = (
+            rotation
+            @
+            self.normal
+        )
+
+
+        return Plane(
+            point=transformed_point,
+            normal=transformed_normal
+        )
