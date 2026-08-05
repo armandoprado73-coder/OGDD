@@ -22,7 +22,7 @@ import numpy as np
 from .vectors import normalize
 
 
-@dataclass
+@dataclass(frozen=True)
 class Plane:
     """
     Mathematical representation of a 3D plane.
@@ -50,23 +50,39 @@ class Plane:
         Normalize and validate plane data.
         """
 
-        self.point = np.asarray(
+        point = np.asarray(
             self.point,
             dtype=float
         )
 
-        self.normal = normalize(
+        normal = normalize(
             np.asarray(
                 self.normal,
                 dtype=float
             )
         )
 
-
-        if self.point.shape != (3,):
+        if point.shape != (3,):
             raise ValueError(
                 "Plane point must have shape (3,)"
             )
+
+        if normal.shape != (3,):
+            raise ValueError(
+                "Plane normal must have shape (3,)"
+            )
+
+        object.__setattr__(
+            self,
+            "point",
+            point
+        )
+
+        object.__setattr__(
+            self,
+            "normal",
+            normal
+        )   
 
 
     def signed_distance(
@@ -114,7 +130,6 @@ class Plane:
         """
         Project a point onto the plane.
         """
-
         point = np.asarray(
             point,
             dtype=float
@@ -126,6 +141,7 @@ class Plane:
 
         return point - distance * self.normal
 
+    
     def transform(
         self,
         transform
