@@ -1,8 +1,7 @@
 from pathlib import Path
 from abc import ABC, abstractmethod
 
-from ..geometry.mesh import Mesh
-
+from ..mesh import Mesh
 
 class MeshLoader(ABC):
     """

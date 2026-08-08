@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from ogdd.mesh import Mesh
 
 from .landmark import Landmark
-
+from .balkwill import BalkwillTriangle
 
 @dataclass
 class DentalModel:
@@ -60,8 +60,6 @@ class DentalModel:
 
     @property
     def is_balkwill_ready(self) -> bool:
-
- 
         """
         Indica si están definidos los tres puntos necesarios
         para construir el triángulo de Balkwill.
@@ -74,3 +72,22 @@ class DentalModel:
         }
 
         return required.issubset(self.landmarks.keys())
+
+
+    @property
+    def balkwill_triangle(self) -> BalkwillTriangle:
+        """
+        Construye el triángulo de Balkwill
+        a partir de los landmarks anatómicos.
+        """
+
+        if not self.is_balkwill_ready:
+            raise ValueError(
+                "DentalModel is not ready for Balkwill triangle."
+            )
+
+        return BalkwillTriangle(
+            left_posterior=self.landmarks["LEFT_SECOND_MOLAR"],
+            right_posterior=self.landmarks["RIGHT_SECOND_MOLAR"],
+            dental_midline=self.landmarks["DENTAL_MIDLINE"],
+        )
