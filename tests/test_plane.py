@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from ogdd.geometry.plane import Plane
-
+from ogdd.geometry.transform import Transform
 
 
 def test_plane_creation():
@@ -148,3 +148,31 @@ def test_invalid_plane_point():
             point=[0, 0],
             normal=[0, 0, 1]
         )
+
+def test_plane_transform():
+    """
+    Test transforming a plane by translation.
+    """
+
+    plane = Plane(
+        point=[0, 0, 0],
+        normal=[0, 0, 1],
+    )
+
+    transform = Transform.translation(
+        [10, 20, 30]
+    )
+
+    transformed = plane.transform(
+        transform
+    )
+
+    assert np.allclose(
+        transformed.point,
+        [10, 20, 30],
+    )
+
+    assert np.allclose(
+        transformed.normal,
+        [0, 0, 1],
+    )

@@ -1,4 +1,3 @@
-
 """
 OGDD - First Pipeline
 
@@ -23,7 +22,9 @@ def main():
     # 1. Load dental mesh
     # --------------------------------------------------
 
-    stl = Path("data/stl/Mandibular Anatomy_Mordida normal.stl")
+    stl = Path(
+        "data/stl/Mandibular Anatomy_Mordida normal.stl"
+    )
 
     print("\nLoading mesh...")
 
@@ -62,6 +63,18 @@ def main():
         reference_used="manual",
     )
 
+    right_condyle = Landmark(
+        name="RIGHT_CONDYLE",
+        point=np.array([100.0, 0.0, 20.0]),
+        reference_used="manual",
+    )
+
+    left_condyle = Landmark(
+        name="LEFT_CONDYLE",
+        point=np.array([-100.0, 0.0, 20.0]),
+        reference_used="manual",
+    )
+
     model.add_landmark(midline)
 
     print("\nLandmark added successfully!")
@@ -71,12 +84,16 @@ def main():
         f"{model.get_landmark('DENTAL_MIDLINE') is not None}"
     )
     print(f"Balkwill ready : {model.is_balkwill_ready}")
+    print(f"Bonwill ready  : {model.is_bonwill_ready}")
 
     model.add_landmark(right_second_molar)
     model.add_landmark(left_second_molar)
+    model.add_landmark(right_condyle)
+    model.add_landmark(left_condyle)
 
     print(f"\nLandmarks     : {model.landmark_count}")
     print(f"Balkwill ready : {model.is_balkwill_ready}")
+    print(f"Bonwill ready  : {model.is_bonwill_ready}")
 
     # --------------------------------------------------
     # 4. Build Balkwill triangle
@@ -87,7 +104,7 @@ def main():
             "DentalModel is not ready for Balkwill triangle."
         )
 
-    triangle = model.balkwill_triangle
+    balkwill = model.balkwill_triangle
 
     # --------------------------------------------------
     # 5. Display Balkwill geometry
@@ -96,10 +113,39 @@ def main():
     print("\nBalkwill Triangle")
     print("-" * 30)
 
-    print(f"Right side           : {triangle.right_side}")
-    print(f"Left side            : {triangle.left_side}")
-    print(f"Intermolar width     : {triangle.intermolar_width}")
-    print(f"Symmetry difference  : {triangle.symmetry_difference}")
+    print(f"Right side           : {balkwill.right_side}")
+    print(f"Left side            : {balkwill.left_side}")
+    print(f"Intermolar width     : {balkwill.intermolar_width}")
+    print(
+        f"Symmetry difference  : "
+        f"{balkwill.symmetry_difference}"
+    )
+
+    # --------------------------------------------------
+    # 6. Build Bonwill triangle
+    # --------------------------------------------------
+
+    if not model.is_bonwill_ready:
+        raise RuntimeError(
+            "DentalModel is not ready for Bonwill triangle."
+        )
+
+    bonwill = model.bonwill_triangle
+
+    # --------------------------------------------------
+    # 7. Display Bonwill geometry
+    # --------------------------------------------------
+
+    print("\nBonwill Triangle")
+    print("-" * 30)
+
+    print(f"Right side           : {bonwill.right_side}")
+    print(f"Left side            : {bonwill.left_side}")
+    print(f"Condylar width       : {bonwill.condylar_width}")
+    print(
+        f"Symmetry difference  : "
+        f"{bonwill.symmetry_difference}"
+    )
 
 
 if __name__ == "__main__":

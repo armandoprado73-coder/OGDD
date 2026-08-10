@@ -130,6 +130,7 @@ class Plane:
         """
         Project a point onto the plane.
         """
+
         point = np.asarray(
             point,
             dtype=float
@@ -154,20 +155,15 @@ class Plane:
         """
 
         transformed_point = transform.apply(
-            self.point.reshape(1,3)
+            self.point.reshape(1, 3)
         )[0]
 
 
-        rotation = transform.matrix[
-            :3,
-            :3
-        ]
+        rotation = transform.matrix[:3, :3]
 
 
         transformed_normal = (
-            rotation
-            @
-            self.normal
+            rotation @ self.normal
         )
 
 

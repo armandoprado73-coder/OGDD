@@ -10,6 +10,7 @@ from ogdd.mesh import Mesh
 
 from .landmark import Landmark
 from .balkwill import BalkwillTriangle
+from .bonwill import BonwillTriangle
 
 @dataclass
 class DentalModel:
@@ -89,5 +90,39 @@ class DentalModel:
         return BalkwillTriangle(
             left_posterior=self.landmarks["LEFT_SECOND_MOLAR"],
             right_posterior=self.landmarks["RIGHT_SECOND_MOLAR"],
+            dental_midline=self.landmarks["DENTAL_MIDLINE"],
+        )
+
+    @property
+    def is_bonwill_ready(self) -> bool:
+        """
+        Indica si están definidos los tres puntos necesarios
+        para construir el triángulo de Bonwill.
+        """
+
+        required = {
+            "RIGHT_CONDYLE",
+            "LEFT_CONDYLE",
+            "DENTAL_MIDLINE",
+        }
+
+        return required.issubset(self.landmarks.keys())
+
+
+    @property
+    def bonwill_triangle(self) -> BonwillTriangle:
+        """
+        Construye el triángulo de Bonwill
+        a partir de los landmarks anatómicos.
+        """
+
+        if not self.is_bonwill_ready:
+            raise ValueError(
+                "DentalModel is not ready for Bonwill triangle."
+            )
+
+        return BonwillTriangle(
+            left_condyle=self.landmarks["LEFT_CONDYLE"],
+            right_condyle=self.landmarks["RIGHT_CONDYLE"],
             dental_midline=self.landmarks["DENTAL_MIDLINE"],
         )
