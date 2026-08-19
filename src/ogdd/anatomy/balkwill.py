@@ -12,6 +12,7 @@ from ogdd.anatomy.landmark import Landmark
 
 from ogdd.geometry.triangle import Triangle
 
+from ogdd.geometry.coordinate_system import CoordinateSystem
 
 @dataclass(frozen=True)
 class BalkwillTriangle:
@@ -38,6 +39,25 @@ class BalkwillTriangle:
             c=self.dental_midline.point,
         )
 
+    @property
+    def coordinate_system(self) -> CoordinateSystem:
+        """
+        Returns the anatomical coordinate system defined
+        by the Balkwill landmarks.
+
+        OGDD anatomical convention:
+
+        Origin = dental midline
+        +X = patient's right
+        +Y = anterior
+        +Z = superior
+        """
+
+        return CoordinateSystem.from_dental_landmarks(
+            right_molar=self.right_posterior.point,
+            left_molar=self.left_posterior.point,
+            dental_midline=self.dental_midline.point,
+        )
 
     @property
     def right_side(self) -> float:

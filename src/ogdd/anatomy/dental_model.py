@@ -7,6 +7,7 @@ Representa un modelo digital de una arcada dental.
 from dataclasses import dataclass, field
 
 from ogdd.mesh import Mesh
+from ogdd.geometry.coordinate_system import CoordinateSystem
 
 from .landmark import Landmark
 from .balkwill import BalkwillTriangle
@@ -58,6 +59,40 @@ class DentalModel:
         """
 
         return len(self.landmarks)
+
+    @property
+    def is_coordinate_system_ready(self) -> bool:
+        """
+        Indica si están definidos los tres landmarks necesarios
+        para construir el sistema de coordenadas anatómico.
+        """
+
+        required = {
+            "RIGHT_SECOND_MOLAR",
+            "LEFT_SECOND_MOLAR",
+            "DENTAL_MIDLINE",
+        }
+
+        return required.issubset(self.landmarks.keys())
+
+    @property
+    def coordinate_system(self) -> CoordinateSystem:
+        """
+        Construye el sistema de coordenadas anatómico
+        a partir de los landmarks dentales.
+        """
+
+        if not self.is_coordinate_system_ready:
+            raise ValueError(
+                "DentalModel is not ready for coordinate system."
+            )
+
+        return CoordinateSystem.from_dental_landmarks(
+            right_molar=self.landmarks["RIGHT_SECOND_MOLAR"].point,
+            left_molar=self.landmarks["LEFT_SECOND_MOLAR"].point,
+            dental_midline=self.landmarks["DENTAL_MIDLINE"].point,
+        )
+
 
     @property
     def is_balkwill_ready(self) -> bool:

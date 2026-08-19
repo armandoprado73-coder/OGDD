@@ -7,9 +7,7 @@ Tests for explicit 3D coordinate reference systems.
 import numpy as np
 import pytest
 
-from ogdd.geometry.coordinate_system import (
-    CoordinateSystem
-)
+from ogdd.geometry.coordinate_system import CoordinateSystem
 
 
 def test_coordinate_system_creation():
@@ -55,6 +53,11 @@ def test_axes_are_normalized():
         x_axis=[10, 0, 0],
         y_axis=[0, 5, 0],
         z_axis=[0, 0, 2]
+    )
+    
+    assert np.allclose(
+        coordinate_system.origin,
+        [0, 0, 0]
     )
 
     assert np.allclose(
@@ -264,6 +267,7 @@ def test_collinear_points_are_invalid():
             [20, 0, 0]
         )
 
+
 def test_to_local_coordinates():
     """
     Test transformation from world to local coordinates.
@@ -277,7 +281,6 @@ def test_to_local_coordinates():
         )
     )
 
-
     points = np.array(
         [
             [10, 20, 30],
@@ -287,11 +290,9 @@ def test_to_local_coordinates():
         dtype=float
     )
 
-
     local = coordinate_system.to_local(
         points
     )
-
 
     expected = np.array(
         [
@@ -301,7 +302,6 @@ def test_to_local_coordinates():
         ],
         dtype=float
     )
-
 
     assert np.allclose(
         local,
@@ -322,7 +322,6 @@ def test_to_world_coordinates():
         )
     )
 
-
     local_points = np.array(
         [
             [0, 0, 0],
@@ -332,11 +331,9 @@ def test_to_world_coordinates():
         dtype=float
     )
 
-
     world = coordinate_system.to_world(
         local_points
     )
-
 
     expected = np.array(
         [
@@ -346,7 +343,6 @@ def test_to_world_coordinates():
         ],
         dtype=float
     )
-
 
     assert np.allclose(
         world,
@@ -368,7 +364,6 @@ def test_local_world_round_trip():
         )
     )
 
-
     original = np.array(
         [
             [0, 0, 0],
@@ -378,16 +373,13 @@ def test_local_world_round_trip():
         dtype=float
     )
 
-
     world = coordinate_system.to_world(
         original
     )
 
-
     recovered = coordinate_system.to_local(
         world
     )
-
 
     assert np.allclose(
         recovered,
@@ -422,4 +414,234 @@ def test_identity_coordinate_system():
     assert np.allclose(
         coordinate_system.z_axis,
         [0, 0, 1]
+    )
+
+def test_dental_landmark_orientation():
+    """
+    Test coordinate system using dental landmarks.
+
+    The left molar is the origin.
+    The right molar defines the positive X direction.
+    The dental midline defines the anterior direction.
+    """
+
+    left_molar = np.array(
+        [0, 0, 0],
+        dtype=float
+    )
+
+    right_molar = np.array(
+        [100, 10, 0],
+        dtype=float
+    )
+
+    dental_midline = np.array(
+        [35, 80, 5],
+        dtype=float
+    )
+
+    coordinate_system = (
+        CoordinateSystem.from_three_points(
+            origin=left_molar,
+            point_x=right_molar,
+            point_y=dental_midline
+        )
+    )
+
+    # The left molar is the origin.
+    assert np.allclose(
+        coordinate_system.origin,
+        left_molar
+    )
+
+    # X must point from the left molar toward
+    # the right molar.
+    expected_x = (
+        right_molar - left_molar
+    )
+
+    expected_x = (
+        expected_x
+        /
+        np.linalg.norm(expected_x)
+    )
+
+    assert np.allclose(
+        coordinate_system.x_axis,
+        expected_x
+    )
+
+    # All axes must be unit vectors.
+    assert np.isclose(
+        np.linalg.norm(
+            coordinate_system.x_axis
+        ),
+        1.0
+    )
+
+    assert np.isclose(
+        np.linalg.norm(
+            coordinate_system.y_axis
+        ),
+        1.0
+    )
+
+    assert np.isclose(
+        np.linalg.norm(
+            coordinate_system.z_axis
+        ),
+        1.0
+    )
+
+    # The three axes must be mutually orthogonal.
+    assert np.isclose(
+        np.dot(
+            coordinate_system.x_axis,
+            coordinate_system.y_axis
+        ),
+        0.0
+    )
+
+    assert np.isclose(
+        np.dot(
+            coordinate_system.x_axis,
+            coordinate_system.z_axis
+        ),
+        0.0
+    )
+
+    assert np.isclose(
+        np.dot(
+            coordinate_system.y_axis,
+            coordinate_system.z_axis
+        ),
+        0.0
+    )
+
+    # The system must be right-handed.
+    assert np.allclose(
+        np.cross(
+            coordinate_system.x_axis,
+            coordinate_system.y_axis
+        ),
+        coordinate_system.z_axis
+    )
+def test_real_dental_landmarks():
+    """
+    Test coordinate system using real dental landmarks
+    selected from the mandibular STL.
+    """
+
+    left_molar = np.array(
+        [
+            29.139037,
+            13.553044,
+            0.271681,
+        ],
+        dtype=float,
+    )
+
+    right_molar = np.array(
+        [
+            -26.484565,
+            13.030479,
+            0.946036,
+        ],
+        dtype=float,
+    )
+
+    dental_midline = np.array(
+        [
+            -2.764405,
+            -23.366814,
+            3.742300,
+        ],
+        dtype=float,
+    )
+
+    coordinate_system = (
+        CoordinateSystem.from_dental_landmarks(
+            right_molar=right_molar,
+            left_molar=left_molar,
+            dental_midline=dental_midline,
+        )
+    )
+
+    # --------------------------------------------------------
+    # El origen debe ser la línea media dental
+    # --------------------------------------------------------
+
+    assert np.allclose(
+        coordinate_system.origin,
+        dental_midline,
+    )
+
+    # --------------------------------------------------------
+    # Los tres ejes deben ser unitarios
+    # --------------------------------------------------------
+
+    assert np.isclose(
+        np.linalg.norm(
+            coordinate_system.x_axis
+        ),
+        1.0,
+    )
+
+    assert np.isclose(
+        np.linalg.norm(
+            coordinate_system.y_axis
+        ),
+        1.0,
+    )
+
+    assert np.isclose(
+        np.linalg.norm(
+            coordinate_system.z_axis
+        ),
+        1.0,
+    )
+
+    # --------------------------------------------------------
+    # Los tres ejes deben ser ortogonales
+    # --------------------------------------------------------
+
+    assert np.isclose(
+        np.dot(
+            coordinate_system.x_axis,
+            coordinate_system.y_axis,
+        ),
+        0.0,
+        atol=1e-10,
+    )
+
+    assert np.isclose(
+        np.dot(
+            coordinate_system.x_axis,
+            coordinate_system.z_axis,
+        ),
+        0.0,
+        atol=1e-10,
+    )
+
+    assert np.isclose(
+        np.dot(
+            coordinate_system.y_axis,
+            coordinate_system.z_axis,
+        ),
+        0.0,
+        atol=1e-10,
+    )
+
+    # --------------------------------------------------------
+    # El sistema debe ser derecho
+    #
+    # X × Y = Z
+    # --------------------------------------------------------
+
+    assert np.allclose(
+        np.cross(
+            coordinate_system.x_axis,
+            coordinate_system.y_axis,
+        ),
+        coordinate_system.z_axis,
     )
