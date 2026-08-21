@@ -13,6 +13,7 @@ from ogdd.anatomy.landmark import Landmark
 
 from ogdd.geometry.triangle import Triangle
 
+from ogdd.geometry.plane import Plane
 
 @dataclass(frozen=True)
 class BonwillTriangle:
@@ -39,6 +40,15 @@ class BonwillTriangle:
             b=self.left_condyle.point,
             c=self.dental_midline.point,
         )
+
+    @property
+    def plane(self) -> Plane:
+        """
+        Returns the geometric plane defined
+        by the Bonwill triangle.
+        """
+
+        return self.triangle.plane
 
     @property
     def right_side(self) -> float:

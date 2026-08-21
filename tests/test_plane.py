@@ -135,7 +135,94 @@ def test_point_projection():
         [2, 3, 0]
     )
 
+def test_angle_between_parallel_planes():
+    """
+    Test angle between parallel planes.
+    """
 
+    plane_a = Plane(
+        point=[0, 0, 0],
+        normal=[0, 0, 1]
+    )
+
+    plane_b = Plane(
+        point=[0, 0, 5],
+        normal=[0, 0, 1]
+    )
+
+    angle = plane_a.angle_to(
+        plane_b
+    )
+
+    assert angle == pytest.approx(0.0)
+
+
+
+def test_angle_between_perpendicular_planes():
+    """
+    Test angle between perpendicular planes.
+    """
+
+    plane_a = Plane(
+        point=[0, 0, 0],
+        normal=[0, 0, 1]
+    )
+
+    plane_b = Plane(
+        point=[0, 0, 0],
+        normal=[1, 0, 0]
+    )
+
+    angle = plane_a.angle_to(
+        plane_b
+    )
+
+    assert angle == pytest.approx(90.0)
+
+
+
+def test_angle_between_planes_45_degrees():
+    """
+    Test a 45 degree angle between planes.
+    """
+
+    plane_a = Plane(
+        point=[0, 0, 0],
+        normal=[0, 0, 1]
+    )
+
+    plane_b = Plane(
+        point=[0, 0, 0],
+        normal=[0, 1, 1]
+    )
+
+    angle = plane_a.angle_to(
+        plane_b
+    )
+
+    assert angle == pytest.approx(45.0)
+
+def test_angle_between_opposite_normals():
+    """
+    Test that opposite normals represent
+    the same plane orientation.
+    """
+
+    plane_a = Plane(
+        point=[0, 0, 0],
+        normal=[0, 0, 1]
+    )
+
+    plane_b = Plane(
+        point=[0, 0, 0],
+        normal=[0, 0, -1]
+    )
+
+    angle = plane_a.angle_to(
+        plane_b
+    )
+
+    assert angle == pytest.approx(0.0)
 
 def test_invalid_plane_point():
     """

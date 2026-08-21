@@ -142,6 +142,39 @@ class Plane:
 
         return point - distance * self.normal
 
+    def angle_to(
+        self,
+        other: "Plane"
+    ) -> float:
+        """
+        Calculate the smallest angle between two planes.
+
+        The result is expressed in degrees and lies
+        between 0 and 90 degrees.
+
+        Opposite normal vectors represent the same
+        plane orientation.
+        """
+
+        dot_product = np.dot(
+            self.normal,
+            other.normal
+        )
+
+        cos_angle = np.clip(
+            abs(dot_product),
+            0.0,
+            1.0
+        )
+
+        angle_radians = np.arccos(
+            cos_angle
+        )
+
+        return float(
+            np.degrees(angle_radians)
+        )
+
     
     def transform(
         self,

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .plane import Plane
 
 @dataclass
 class Triangle:
@@ -54,3 +55,42 @@ class Triangle:
         """
 
         return (self.a + self.b + self.c) / 3
+
+    @property
+    def normal(self) -> np.ndarray:
+        """
+        Vector normal unitario al plano
+        definido por el triángulo.
+        """
+
+        ab = self.b - self.a
+        ac = self.c - self.a
+
+        normal = np.cross(
+            ab,
+            ac
+        )
+
+        magnitude = np.linalg.norm(
+            normal
+        )
+
+        if magnitude == 0:
+            raise ValueError(
+                "Triangle points must not be collinear."
+            )
+
+        return normal / magnitude
+
+
+    @property
+    def plane(self) -> Plane:
+        """
+        Plano definido por los tres puntos
+        del triángulo.
+        """
+
+        return Plane(
+            point=self.a,
+            normal=self.normal
+        )

@@ -10,7 +10,8 @@ import numpy as np
 from ogdd.anatomy.dental_model import DentalModel
 from ogdd.anatomy.landmark import Landmark
 from ogdd.io.stl import STLReader
-
+from ogdd.articulator.bonwill_builder import BonwillBuilder
+from ogdd.articulator.configuration import ArticulatorConfiguration
 
 def main():
     print("=" * 50)
@@ -21,14 +22,23 @@ def main():
     # 1. Load dental mesh
     # --------------------------------------------------
 
-    stl = Path(
+    mandibular_stl = Path(
         "data/stl/Mandibular Anatomy_Mordida normal.stl"
     )
 
-    print("\nLoading mesh...")
+    maxillary_stl = Path(
+        "data/stl/Maxillary Anatomy.stl"
+    )
 
-    mesh = STLReader.read(stl)
+    print("\nLoading meshes...")
 
+    mesh = STLReader.read(
+        mandibular_stl
+    )
+
+    maxillary_mesh = STLReader.read(
+        maxillary_stl
+    )
     # --------------------------------------------------
     # 2. Create DentalModel
     # --------------------------------------------------
@@ -39,7 +49,9 @@ def main():
     print(f"Mesh vertices : {len(model.mesh.vertices)}")
     print(f"Mesh faces    : {len(model.mesh.faces)}")
     print(f"Landmarks     : {model.landmark_count}")
-
+    print("\nMaxillary mesh loaded successfully!")
+    print(f"Maxillary vertices : {len(maxillary_mesh.vertices)}")
+    print(f"Maxillary faces    : {len(maxillary_mesh.faces)}")
     # --------------------------------------------------
     # 3. Define anatomical landmarks
     # --------------------------------------------------
@@ -72,19 +84,7 @@ def main():
             0.271681,
         ]),
         reference_used="manual",
-    )
-
-    right_condyle = Landmark(
-        name="RIGHT_CONDYLE",
-        point=np.array([100.0, 0.0, 20.0]),
-        reference_used="manual",
-    )
-
-    left_condyle = Landmark(
-        name="LEFT_CONDYLE",
-        point=np.array([-100.0, 0.0, 20.0]),
-        reference_used="manual",
-    )
+    )   
 
     model.add_landmark(midline)
 
@@ -99,8 +99,6 @@ def main():
 
     model.add_landmark(right_second_molar)
     model.add_landmark(left_second_molar)
-    model.add_landmark(right_condyle)
-    model.add_landmark(left_condyle)
 
     print(f"\nLandmarks     : {model.landmark_count}")
     print(f"Balkwill ready : {model.is_balkwill_ready}")
@@ -126,6 +124,10 @@ def main():
 
     local_vertices = coordinate_system.to_local(
         model.mesh.vertices
+    )
+
+    local_maxillary_vertices = coordinate_system.to_local(
+        maxillary_mesh.vertices
     )
 
     print("\nMesh in Anatomical Coordinates")
@@ -175,7 +177,97 @@ def main():
     print(f"Left molar  : {local_landmarks[2]}")
 
     # --------------------------------------------------
-    # 7. Visualize anatomical mesh
+    # 7. Build Balkwill triangle
+    # --------------------------------------------------
+
+    # --------------------------------------------------
+    # 8. Build Balkwill triangle
+    # --------------------------------------------------
+
+    if not model.is_balkwill_ready:
+        raise RuntimeError(
+            "DentalModel is not ready for Balkwill triangle."
+        )
+
+    balkwill = model.balkwill_triangle
+
+    # --------------------------------------------------
+    # 9. Display Balkwill geometry
+    # --------------------------------------------------
+
+    print("\nBalkwill Triangle")
+    print("-" * 30)
+
+    print(f"Right side           : {balkwill.right_side}")
+    print(f"Left side            : {balkwill.left_side}")
+    print(f"Intermolar width     : {balkwill.intermolar_width}")
+    print(
+        f"Symmetry difference  : "
+        f"{balkwill.symmetry_difference}"
+    )
+
+
+    # --------------------------------------------------
+    # 10. Build virtual Bonwill triangle
+    # --------------------------------------------------
+
+    configuration = ArticulatorConfiguration()
+
+    virtual_bonwill = BonwillBuilder.build(
+        coordinate_system=coordinate_system,
+        dental_midline=midline,
+        configuration=configuration,
+    )
+
+    model.add_landmark(
+        virtual_bonwill.right_condyle
+    )
+
+    model.add_landmark(
+        virtual_bonwill.left_condyle
+    )
+
+    bonwill = model.bonwill_triangle
+    # --------------------------------------------------
+    # 11. Display Bonwill geometry
+    # --------------------------------------------------
+
+    print("\nBonwill Triangle")
+    print("-" * 30)
+
+    print(f"Right side           : {bonwill.right_side}")
+    print(f"Left side            : {bonwill.left_side}")
+    print(f"Condylar width       : {bonwill.condylar_width}")
+    print(
+        f"Symmetry difference  : "
+        f"{bonwill.symmetry_difference}"
+    )
+
+    # --------------------------------------------------
+    # 12. Validate Balkwill angle
+    # --------------------------------------------------
+
+    measured_balkwill_angle = (
+        balkwill.plane.angle_to(
+            bonwill.plane
+        )
+    )
+
+    print("\nBalkwill Angle")
+    print("-" * 30)
+
+    print(
+        f"Configured angle : "
+        f"{configuration.balkwill_angle_degrees:.2f} deg"
+    )
+
+    print(
+        f"Measured angle   : "
+        f"{measured_balkwill_angle:.2f} deg"
+    )
+
+    # --------------------------------------------------
+    # 12. Visualize anatomical model
     # --------------------------------------------------
 
     faces = np.hstack(
@@ -194,6 +286,22 @@ def main():
         faces,
     )
 
+    maxillary_faces = np.hstack(
+        [
+            np.full(
+                (len(maxillary_mesh.faces), 1),
+                3,
+                dtype=int,
+            ),
+            maxillary_mesh.faces,
+        ]
+    ).ravel()
+
+    maxillary_anatomical_mesh = pv.PolyData(
+        local_maxillary_vertices,
+        maxillary_faces,
+    )
+
     plotter = pv.Plotter()
 
     plotter.add_mesh(
@@ -202,6 +310,101 @@ def main():
     )
 
     plotter.show_axes()
+
+    plotter = pv.Plotter()
+
+    plotter.add_mesh(
+        anatomical_mesh,
+        color="lightblue",
+        opacity=1.0,
+        show_edges=False,
+    )
+
+    plotter.add_mesh(
+        maxillary_anatomical_mesh,
+        color="mistyrose",
+        opacity=0.55,
+        show_edges=False,
+    )
+
+    plotter.show_axes()
+
+    # --------------------------------------------------
+    # Balkwill triangle in anatomical coordinates
+    # --------------------------------------------------
+
+    balkwill_points_world = np.array(
+        [
+            balkwill.triangle.a,
+            balkwill.triangle.b,
+            balkwill.triangle.c,
+            balkwill.triangle.a,
+        ]
+    )
+
+    balkwill_points_local = coordinate_system.to_local(
+        balkwill_points_world
+    )
+
+    plotter.add_lines(
+        balkwill_points_local,
+        color="yellow",
+        width=4,
+        connected=True,
+    )
+
+    plotter.add_mesh(
+        pv.PolyData(
+            balkwill_points_local[:3]
+        ),
+        color="yellow",
+        point_size=14,
+        render_points_as_spheres=True,
+    )
+
+    # --------------------------------------------------
+    # Bonwill triangle in anatomical coordinates
+    # --------------------------------------------------
+
+    bonwill_points_world = np.array(
+        [
+            bonwill.triangle.a,
+            bonwill.triangle.b,
+            bonwill.triangle.c,
+            bonwill.triangle.a,
+        ]
+    )
+
+    bonwill_points_local = coordinate_system.to_local(
+        bonwill_points_world
+    )
+
+    plotter.add_lines(
+        bonwill_points_local,
+        color="red",
+        width=4,
+        connected=True,
+    )
+
+    plotter.add_mesh(
+        pv.PolyData(
+            bonwill_points_local[:3]
+        ),
+        color="red",
+        point_size=14,
+        render_points_as_spheres=True,
+    )
+
+    plotter.add_point_labels(
+        bonwill_points_local[:2],
+        [
+            "RIGHT CONDYLE",
+            "LEFT CONDYLE",
+        ],
+        point_size=12,
+        font_size=14,
+        render_points_as_spheres=True,
+    )
 
     # --------------------------------------------------
     # Anatomical landmarks
@@ -249,60 +452,39 @@ def main():
         mag=axis_length,
         color="blue",
     )
+
     print("\nOpening anatomical mesh viewer...")
 
     plotter.show()
-    # --------------------------------------------------
-    # 8. Build Balkwill triangle
-    # --------------------------------------------------
-
-    if not model.is_balkwill_ready:
-        raise RuntimeError(
-            "DentalModel is not ready for Balkwill triangle."
-        )
-
-    balkwill = model.balkwill_triangle
 
     # --------------------------------------------------
-    # 9. Display Balkwill geometry
+    # 7. Visualize anatomical mesh
     # --------------------------------------------------
 
-    print("\nBalkwill Triangle")
-    print("-" * 30)
+    faces = np.hstack(
+        [
+            np.full(
+                (len(model.mesh.faces), 1),
+                3,
+                dtype=int,
+            ),
+            model.mesh.faces,
+        ]
+    ).ravel()
 
-    print(f"Right side           : {balkwill.right_side}")
-    print(f"Left side            : {balkwill.left_side}")
-    print(f"Intermolar width     : {balkwill.intermolar_width}")
-    print(
-        f"Symmetry difference  : "
-        f"{balkwill.symmetry_difference}"
+    anatomical_mesh = pv.PolyData(
+        local_vertices,
+        faces,
     )
 
-    # --------------------------------------------------
-    # 10. Build Bonwill triangle
-    # --------------------------------------------------
+    plotter = pv.Plotter()
 
-    if not model.is_bonwill_ready:
-        raise RuntimeError(
-            "DentalModel is not ready for Bonwill triangle."
-        )
-
-    bonwill = model.bonwill_triangle
-
-    # --------------------------------------------------
-    # 11. Display Bonwill geometry
-    # --------------------------------------------------
-
-    print("\nBonwill Triangle")
-    print("-" * 30)
-
-    print(f"Right side           : {bonwill.right_side}")
-    print(f"Left side            : {bonwill.left_side}")
-    print(f"Condylar width       : {bonwill.condylar_width}")
-    print(
-        f"Symmetry difference  : "
-        f"{bonwill.symmetry_difference}"
+    plotter.add_mesh(
+        anatomical_mesh,
+        show_edges=False,
     )
+
+    plotter.show_axes()
 
 if __name__ == "__main__":
     main()

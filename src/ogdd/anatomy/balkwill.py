@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from ogdd.anatomy.landmark import Landmark
 
 from ogdd.geometry.triangle import Triangle
-
+from ogdd.geometry.plane import Plane
 from ogdd.geometry.coordinate_system import CoordinateSystem
 
 @dataclass(frozen=True)
@@ -38,6 +38,15 @@ class BalkwillTriangle:
             b=self.left_posterior.point,
             c=self.dental_midline.point,
         )
+
+    @property
+    def plane(self) -> Plane:
+        """
+        Returns the geometric plane defined
+        by the Balkwill triangle.
+        """
+
+        return self.triangle.plane
 
     @property
     def coordinate_system(self) -> CoordinateSystem:
