@@ -40,12 +40,21 @@ def main() -> None:
         "data/stl/Mandibular Anatomy_Mordida normal.stl"
     )
 
-    print("\nLoading mandibular mesh...")
+    maxillary_stl = Path(
+        "data/stl/Maxillary Anatomy.stl"
+    )
 
-    mesh = STLReader.read(mandibular_stl)
+    print("\nLoading dental meshes...")
+
+    mesh = STLReader.read(
+        mandibular_stl
+    )
+
+    maxillary_mesh = STLReader.read(
+        maxillary_stl
+    )
 
     model = DentalModel(mesh)
-
     # --------------------------------------------------
     # 2. Define real anatomical landmarks
     # --------------------------------------------------
@@ -187,6 +196,28 @@ def main() -> None:
             world_points
         )
 
+    def bonwill_sides_local(
+        bonwill_triangle,
+    ) -> np.ndarray:
+        """
+        Returns only the two anterior Bonwill sides.
+
+        The condylar side is represented separately
+        by the hinge axis.
+        """
+
+        triangle = bonwill_triangle.triangle
+
+        world_points = np.array([
+            triangle.a,
+            triangle.c,
+            triangle.b,
+        ])
+
+        return coordinate_system.to_local(
+            world_points
+        )
+
     def moving_landmarks_local(
         position,
     ) -> np.ndarray:
@@ -225,6 +256,24 @@ def main() -> None:
         faces,
     )
 
+    maxillary_faces = np.hstack(
+        [
+            np.full(
+                (len(maxillary_mesh.faces), 1),
+                3,
+                dtype=int,
+            ),
+            maxillary_mesh.faces,
+        ]
+    ).ravel()
+
+    maxillary_surface = pv.PolyData(
+        coordinate_system.to_local(
+            maxillary_mesh.vertices
+        ),
+        maxillary_faces,
+    )
+
     balkwill_line = pv.lines_from_points(
         triangle_points_local(
             initial_position.balkwill.triangle
@@ -232,8 +281,8 @@ def main() -> None:
     )
 
     bonwill_line = pv.lines_from_points(
-        triangle_points_local(
-            initial_position.bonwill.triangle
+        bonwill_sides_local(
+            initial_position.bonwill
         )
     )
 
@@ -257,6 +306,13 @@ def main() -> None:
     plotter = pv.Plotter()
 
     plotter.add_mesh(
+        maxillary_surface,
+        color="mistyrose",
+        opacity=0.55,
+        show_edges=False,
+    )
+
+    plotter.add_mesh(
         mandibular_surface,
         color="lightblue",
         show_edges=False,
@@ -276,8 +332,9 @@ def main() -> None:
 
     plotter.add_mesh(
         hinge_line,
-        color="white",
+        color="black",
         line_width=8,
+        render_lines_as_tubes=True,
     )
 
     plotter.add_mesh(
@@ -330,8 +387,8 @@ def main() -> None:
         )
 
         bonwill_line.points = (
-            triangle_points_local(
-                position.bonwill.triangle
+            bonwill_sides_local(
+                position.bonwill
             )
         )
 
