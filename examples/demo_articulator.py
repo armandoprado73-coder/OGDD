@@ -25,7 +25,9 @@ from ogdd.articulator.mandibular_controller import (
     MandibularController,
 )
 from ogdd.io.stl import STLReader
-
+from ogdd.articulator.condylar_guide_builder import (
+    CondylarGuideBuilder,
+)
 
 def main() -> None:
     print("=" * 50)
@@ -124,6 +126,12 @@ def main() -> None:
         right_condyle=bonwill.right_condyle,
     )
 
+    condylar_guides = CondylarGuideBuilder.build(
+        hinge_axis=hinge_axis,
+        coordinate_system=coordinate_system,
+        configuration=configuration,
+    )
+
     # --------------------------------------------------
     # 4. Build movable mandibular assembly
     # --------------------------------------------------
@@ -171,6 +179,20 @@ def main() -> None:
     print(
         f"Current angle   : "
         f"{controller.angle_degrees:.2f} deg"
+    )
+    print(
+        f"Right guidance : "
+        f"{condylar_guides.right_guide.angle_degrees:.2f} deg"
+    )
+
+    print(
+        f"Left guidance  : "
+        f"{condylar_guides.left_guide.angle_degrees:.2f} deg"
+    )
+
+    print(
+        f"Functional path: "
+        f"{condylar_guides.right_guide.maximum_translation:.2f} mm"
     )
 
     # --------------------------------------------------
@@ -234,6 +256,31 @@ def main() -> None:
 
         return coordinate_system.to_local(
             world_points
+        )
+
+    def quad_surface_local(
+        world_vertices: np.ndarray,
+    ) -> pv.PolyData:
+        """
+        Builds one quadrilateral surface in local
+        anatomical coordinates.
+        """
+
+        local_vertices = coordinate_system.to_local(
+            world_vertices
+        )
+
+        quad_face = np.array([
+            4,
+            0,
+            1,
+            2,
+            3,
+        ])
+
+        return pv.PolyData(
+            local_vertices,
+            quad_face,
         )
 
     initial_position = controller.position
@@ -303,6 +350,68 @@ def main() -> None:
         hinge_points_local
     )
 
+    right_main_guide = quad_surface_local(
+        condylar_guides
+        .right_guide
+        .main_surface_vertices
+    )
+
+    right_posterior_stop = quad_surface_local(
+        condylar_guides
+        .right_guide
+        .posterior_stop_vertices
+    )
+
+    left_main_guide = quad_surface_local(
+        condylar_guides
+        .left_guide
+        .main_surface_vertices
+    )
+
+    left_posterior_stop = quad_surface_local(
+        condylar_guides
+        .left_guide
+        .posterior_stop_vertices
+    )
+
+    right_condyle_center = (
+        coordinate_system.to_local(
+            condylar_guides
+            .right_guide
+            .condyle_center
+        )
+    )
+
+    left_condyle_center = (
+        coordinate_system.to_local(
+            condylar_guides
+            .left_guide
+            .condyle_center
+        )
+    )
+
+    right_condyle_sphere = pv.Sphere(
+        radius=(
+            condylar_guides
+            .right_guide
+            .condyle_radius
+        ),
+        center=right_condyle_center,
+        theta_resolution=48,
+        phi_resolution=48,
+    )
+
+    left_condyle_sphere = pv.Sphere(
+        radius=(
+            condylar_guides
+            .left_guide
+            .condyle_radius
+        ),
+        center=left_condyle_center,
+        theta_resolution=48,
+        phi_resolution=48,
+    )
+
     plotter = pv.Plotter()
 
     plotter.add_mesh(
@@ -362,6 +471,54 @@ def main() -> None:
     )
 
     plotter.show_axes()
+
+    plotter.add_mesh(
+        right_main_guide,
+        color="orange",
+        opacity=0.70,
+        show_edges=True,
+        edge_color="darkorange",
+        line_width=2,
+    )
+
+    plotter.add_mesh(
+        right_posterior_stop,
+        color="tomato",
+        opacity=0.85,
+        show_edges=True,
+        edge_color="darkred",
+        line_width=2,
+    )
+
+    plotter.add_mesh(
+        left_main_guide,
+        color="orange",
+        opacity=0.70,
+        show_edges=True,
+        edge_color="darkorange",
+        line_width=2,
+    )
+
+    plotter.add_mesh(
+        left_posterior_stop,
+        color="tomato",
+        opacity=0.85,
+        show_edges=True,
+        edge_color="darkred",
+        line_width=2,
+    )
+
+    plotter.add_mesh(
+        right_condyle_sphere,
+        color="silver",
+        smooth_shading=True,
+    )
+
+    plotter.add_mesh(
+        left_condyle_sphere,
+        color="silver",
+        smooth_shading=True,
+    )
 
     # --------------------------------------------------
     # 7. Connect slider to mandibular controller
