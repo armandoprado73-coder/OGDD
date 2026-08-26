@@ -73,3 +73,90 @@ def test_balkwill_angle_must_be_valid():
         ArticulatorConfiguration(
             balkwill_angle_degrees=0.0
         )
+def test_default_condylar_guidance_is_45_degrees():
+
+    configuration = ArticulatorConfiguration()
+
+    assert (
+        configuration.right_condylar_guidance_degrees
+        == 45.0
+    )
+
+    assert (
+        configuration.left_condylar_guidance_degrees
+        == 45.0
+    )
+
+
+def test_condylar_guidance_angles_are_independent():
+
+    configuration = ArticulatorConfiguration(
+        right_condylar_guidance_degrees=35.0,
+        left_condylar_guidance_degrees=42.0,
+    )
+
+    assert (
+        configuration.right_condylar_guidance_degrees
+        == 35.0
+    )
+
+    assert (
+        configuration.left_condylar_guidance_degrees
+        == 42.0
+    )
+
+
+def test_default_condyle_dimensions():
+
+    configuration = ArticulatorConfiguration()
+
+    assert configuration.condyle_diameter == 6.0
+    assert configuration.condyle_radius == 3.0
+
+
+def test_default_condylar_guide_dimensions():
+
+    configuration = ArticulatorConfiguration()
+
+    assert configuration.condylar_guide_length == 20.0
+    assert configuration.condylar_guide_width == 20.0
+
+
+def test_right_condylar_guidance_must_be_valid():
+
+    with pytest.raises(ValueError):
+        ArticulatorConfiguration(
+            right_condylar_guidance_degrees=90.0,
+        )
+
+
+def test_left_condylar_guidance_must_be_valid():
+
+    with pytest.raises(ValueError):
+        ArticulatorConfiguration(
+            left_condylar_guidance_degrees=-1.0,
+        )
+
+
+def test_condyle_diameter_must_be_positive():
+
+    with pytest.raises(ValueError):
+        ArticulatorConfiguration(
+            condyle_diameter=0.0,
+        )
+
+
+def test_condylar_guide_length_must_be_positive():
+
+    with pytest.raises(ValueError):
+        ArticulatorConfiguration(
+            condylar_guide_length=0.0,
+        )
+
+
+def test_condylar_guide_width_must_be_positive():
+
+    with pytest.raises(ValueError):
+        ArticulatorConfiguration(
+            condylar_guide_width=0.0,
+        )
