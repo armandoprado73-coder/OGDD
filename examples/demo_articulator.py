@@ -24,6 +24,15 @@ from ogdd.articulator.configuration import (
 from ogdd.articulator.mandibular_controller import (
     MandibularController,
 )
+from ogdd.articulator.lateral_controller import (
+    LateralController,
+)
+from ogdd.articulator.guided_lateral_excursion import (
+    GuidedLateralExcursion,
+)
+from ogdd.articulator.lateral_excursion import (
+    LateralSide,
+)
 from ogdd.io.stl import STLReader
 from ogdd.articulator.condylar_guide_builder import (
     CondylarGuideBuilder,
@@ -149,6 +158,34 @@ def main() -> None:
         step_degrees=1.0,
     )
 
+    right_excursion = GuidedLateralExcursion(
+        hinge_axis=hinge_axis,
+        superior_direction=coordinate_system.z_axis,
+        working_side=LateralSide.RIGHT,
+        balancing_guide=condylar_guides.left_guide,
+    )
+
+    left_excursion = GuidedLateralExcursion(
+        hinge_axis=hinge_axis,
+        superior_direction=coordinate_system.z_axis,
+        working_side=LateralSide.LEFT,
+        balancing_guide=condylar_guides.right_guide,
+    )
+
+    maximum_lateral_angle = min(
+        10.0,
+        right_excursion.maximum_angle_degrees,
+        left_excursion.maximum_angle_degrees,
+    )
+
+    lateral_controller = LateralController(
+        assembly=assembly,
+        right_excursion=right_excursion,
+        left_excursion=left_excursion,
+        maximum_angle_degrees=maximum_lateral_angle,
+        step_degrees=1.0,
+    )
+
     # --------------------------------------------------
     # 5. Verify movement with the real mesh
     # --------------------------------------------------
@@ -163,6 +200,52 @@ def main() -> None:
     )
 
     controller.reset()
+
+    centric_lateral_position = (
+        lateral_controller.position
+    )
+
+    right_lateral_position = (
+        lateral_controller.move_right()
+    )
+
+    right_lateral_mesh_changed = (
+        not np.allclose(
+            centric_lateral_position.mesh.vertices,
+            right_lateral_position.mesh.vertices,
+        )
+    )
+
+    right_working_condyle_fixed = np.allclose(
+        right_lateral_position
+        .bonwill
+        .right_condyle
+        .point,
+        bonwill.right_condyle.point,
+    )
+
+    lateral_controller.reset()
+
+    left_lateral_position = (
+        lateral_controller.move_left()
+    )
+
+    left_lateral_mesh_changed = (
+        not np.allclose(
+            centric_lateral_position.mesh.vertices,
+            left_lateral_position.mesh.vertices,
+        )
+    )
+
+    left_working_condyle_fixed = np.allclose(
+        left_lateral_position
+        .bonwill
+        .left_condyle
+        .point,
+        bonwill.left_condyle.point,
+    )
+
+    lateral_controller.reset()
 
     print("\nArticulator ready!")
     print(f"Mesh vertices   : {model.mesh.vertex_count}")
@@ -179,6 +262,35 @@ def main() -> None:
     print(
         f"Current angle   : "
         f"{controller.angle_degrees:.2f} deg"
+    )
+    print(
+        f"Maximum lateral : "
+        f"{lateral_controller.maximum_angle_degrees:.2f} deg"
+    )
+
+    print(
+        f"Lateral step    : "
+        f"{lateral_controller.step_degrees:.2f} deg"
+    )
+
+    print(
+        f"Right mesh moved: "
+        f"{right_lateral_mesh_changed}"
+    )
+
+    print(
+        f"Right work fixed: "
+        f"{right_working_condyle_fixed}"
+    )
+
+    print(
+        f"Left mesh moved : "
+        f"{left_lateral_mesh_changed}"
+    )
+
+    print(
+        f"Left work fixed : "
+        f"{left_working_condyle_fixed}"
     )
     print(
         f"Right guidance : "
@@ -456,8 +568,8 @@ def main() -> None:
     plotter.add_point_labels(
         hinge_points_local,
         [
-            "RIGHT CONDYLE",
-            "LEFT CONDYLE",
+            "RIGHT CONDYLE (RC)",
+            "LEFT CONDYLE (RC)",
         ],
         point_size=12,
         font_size=14,
@@ -465,7 +577,7 @@ def main() -> None:
     )
 
     plotter.add_text(
-        "Move the slider to open or close",
+        "Vertical: opening | Horizontal: lateral excursion",
         position="upper_left",
         font_size=12,
     )
@@ -520,16 +632,36 @@ def main() -> None:
         smooth_shading=True,
     )
 
+    right_condyle_sphere_initial_points = (
+        right_condyle_sphere.points.copy()
+    )
+
+    left_condyle_sphere_initial_points = (
+        left_condyle_sphere.points.copy()
+    )
+
+    initial_right_condyle_local = (
+        coordinate_system.to_local(
+            bonwill.right_condyle.point
+        )
+    )
+
+    initial_left_condyle_local = (
+        coordinate_system.to_local(
+            bonwill.left_condyle.point
+        )
+    )
+
     # --------------------------------------------------
-    # 7. Connect slider to mandibular controller
+    # 7. Connect movement controllers
     # --------------------------------------------------
 
-    def update_opening(
-        angle_degrees: float,
+    def update_mandibular_visuals(
+        position,
     ) -> None:
-        position = controller.set_angle(
-            angle_degrees
-        )
+        """
+        Update every movable mandibular structure.
+        """
 
         mandibular_surface.points = (
             coordinate_system.to_local(
@@ -553,22 +685,150 @@ def main() -> None:
             moving_landmarks_local(position)
         )
 
+        current_hinge_points_local = (
+            coordinate_system.to_local(
+                np.array([
+                    position
+                    .bonwill
+                    .right_condyle
+                    .point,
+                    position
+                    .bonwill
+                    .left_condyle
+                    .point,
+                ])
+            )
+        )
+
+        hinge_line.points = (
+            current_hinge_points_local
+        )
+
+        right_condyle_displacement = (
+            current_hinge_points_local[0]
+            - initial_right_condyle_local
+        )
+
+        left_condyle_displacement = (
+            current_hinge_points_local[1]
+            - initial_left_condyle_local
+        )
+
+        right_condyle_sphere.points = (
+            right_condyle_sphere_initial_points
+            + right_condyle_displacement
+        )
+
+        left_condyle_sphere.points = (
+            left_condyle_sphere_initial_points
+            + left_condyle_displacement
+        )
+
         plotter.render()
 
-    plotter.add_slider_widget(
+    slider_widgets = {}
+
+    def set_slider_value(
+        name: str,
+        value: float,
+    ) -> None:
+        """
+        Update another slider without changing geometry.
+        """
+
+        if name not in slider_widgets:
+            return
+
+        representation = (
+            slider_widgets[name]
+            .GetRepresentation()
+        )
+
+        if not np.isclose(
+            representation.GetValue(),
+            value,
+        ):
+            representation.SetValue(
+                value
+            )
+
+    def update_opening(
+        angle_degrees: float,
+    ) -> None:
+        """
+        Show opening from centric relation.
+        """
+
+        lateral_controller.reset()
+
+        set_slider_value(
+            name="lateral",
+            value=0.0,
+        )
+
+        position = controller.set_angle(
+            angle_degrees
+        )
+
+        update_mandibular_visuals(
+            position
+        )
+
+    def update_lateral(
+        angle_degrees: float,
+    ) -> None:
+        """
+        Show lateral movement from closed position.
+        """
+
+        controller.reset()
+
+        set_slider_value(
+            name="opening",
+            value=0.0,
+        )
+
+        position = lateral_controller.set_angle(
+            angle_degrees
+        )
+
+        update_mandibular_visuals(
+            position
+        )
+
+    opening_slider = plotter.add_slider_widget(
         callback=update_opening,
         rng=[
             0.0,
             controller.maximum_angle_degrees,
         ],
         value=controller.angle_degrees,
-        title="Opening angle (degrees)",
-        pointa=(0.20, 0.10),
+        title="Opening angle",
+        pointa=(0.08, 0.20),
+        pointb=(0.08, 0.80),
+        interaction_event="always",
+    )
+
+    slider_widgets["opening"] = (
+        opening_slider
+    )
+
+    lateral_slider = plotter.add_slider_widget(
+        callback=update_lateral,
+        rng=[
+            -lateral_controller.maximum_angle_degrees,
+            lateral_controller.maximum_angle_degrees,
+        ],
+        value=lateral_controller.angle_degrees,
+        title="LEFT   -   RC   -   RIGHT",
+        pointa=(0.25, 0.10),
         pointb=(0.80, 0.10),
         interaction_event="always",
     )
 
-    plotter.view_isometric()
+    slider_widgets["lateral"] = (
+        lateral_slider
+    )
 
     print("\nOpening interactive viewer...")
 
