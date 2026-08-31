@@ -33,6 +33,12 @@ from ogdd.articulator.guided_lateral_excursion import (
 from ogdd.articulator.lateral_excursion import (
     LateralSide,
 )
+from ogdd.articulator.guided_protrusion import (
+    GuidedProtrusion,
+)
+from ogdd.articulator.protrusion_controller import (
+    ProtrusionController,
+)
 from ogdd.io.stl import STLReader
 from ogdd.articulator.condylar_guide_builder import (
     CondylarGuideBuilder,
@@ -186,6 +192,21 @@ def main() -> None:
         step_degrees=1.0,
     )
 
+    protrusion = GuidedProtrusion(
+        hinge_axis=hinge_axis,
+        right_guide=condylar_guides.right_guide,
+        left_guide=condylar_guides.left_guide,
+    )
+
+    protrusion_controller = ProtrusionController(
+        assembly=assembly,
+        protrusion=protrusion,
+        maximum_distance_mm=(
+            protrusion.maximum_translation
+        ),
+        step_mm=1.0,
+    )
+
     # --------------------------------------------------
     # 5. Verify movement with the real mesh
     # --------------------------------------------------
@@ -225,6 +246,43 @@ def main() -> None:
     )
 
     lateral_controller.reset()
+
+    centric_protrusive_position = (
+        protrusion_controller.position
+    )
+
+    protrusive_position = (
+        protrusion_controller.advance()
+    )
+
+    protrusive_mesh_changed = (
+        not np.allclose(
+            centric_protrusive_position.mesh.vertices,
+            protrusive_position.mesh.vertices,
+        )
+    )
+
+    right_condyle_follows_guide = np.allclose(
+        protrusive_position
+        .bonwill
+        .right_condyle
+        .point,
+        protrusion.right_target_at(
+            protrusion_controller.distance_mm
+        ),
+    )
+
+    left_condyle_follows_guide = np.allclose(
+        protrusive_position
+        .bonwill
+        .left_condyle
+        .point,
+        protrusion.left_target_at(
+            protrusion_controller.distance_mm
+        ),
+    )
+
+    protrusion_controller.reset()
 
     left_lateral_position = (
         lateral_controller.move_left()
@@ -291,6 +349,30 @@ def main() -> None:
     print(
         f"Left work fixed : "
         f"{left_working_condyle_fixed}"
+    )
+    print(
+        f"Maximum protrus.: "
+        f"{protrusion_controller.maximum_distance_mm:.2f} mm"
+    )
+
+    print(
+        f"Protrusion step : "
+        f"{protrusion_controller.step_mm:.2f} mm"
+    )
+
+    print(
+        f"Protrusive mesh : "
+        f"{protrusive_mesh_changed}"
+    )
+
+    print(
+        f"Right on guide  : "
+        f"{right_condyle_follows_guide}"
+    )
+
+    print(
+        f"Left on guide   : "
+        f"{left_condyle_follows_guide}"
     )
     print(
         f"Right guidance : "
@@ -577,7 +659,7 @@ def main() -> None:
     )
 
     plotter.add_text(
-        "Vertical: opening | Horizontal: lateral excursion",
+        "Vertical: opening | Lower: lateral | Upper: protrusion",
         position="upper_left",
         font_size=12,
     )
@@ -760,9 +842,15 @@ def main() -> None:
         """
 
         lateral_controller.reset()
+        protrusion_controller.reset()
 
         set_slider_value(
             name="lateral",
+            value=0.0,
+        )
+
+        set_slider_value(
+            name="protrusion",
             value=0.0,
         )
 
@@ -782,14 +870,48 @@ def main() -> None:
         """
 
         controller.reset()
+        protrusion_controller.reset()
 
         set_slider_value(
             name="opening",
             value=0.0,
         )
 
+        set_slider_value(
+            name="protrusion",
+            value=0.0,
+        )
+
         position = lateral_controller.set_angle(
             angle_degrees
+        )
+
+        update_mandibular_visuals(
+            position
+        )
+
+    def update_protrusion(
+        distance_mm: float,
+    ) -> None:
+        """
+        Show guided protrusion from centric relation.
+        """
+
+        controller.reset()
+        lateral_controller.reset()
+
+        set_slider_value(
+            name="opening",
+            value=0.0,
+        )
+
+        set_slider_value(
+            name="lateral",
+            value=0.0,
+        )
+
+        position = protrusion_controller.set_distance(
+            distance_mm
         )
 
         update_mandibular_visuals(
@@ -828,6 +950,23 @@ def main() -> None:
 
     slider_widgets["lateral"] = (
         lateral_slider
+    )
+
+    protrusion_slider = plotter.add_slider_widget(
+        callback=update_protrusion,
+        rng=[
+            0.0,
+            protrusion_controller.maximum_distance_mm,
+        ],
+        value=protrusion_controller.distance_mm,
+        title="PROTRUSION (mm)",
+        pointa=(0.25, 0.90),
+        pointb=(0.80, 0.90),
+        interaction_event="always",
+    )
+
+    slider_widgets["protrusion"] = (
+        protrusion_slider
     )
 
     print("\nOpening interactive viewer...")
