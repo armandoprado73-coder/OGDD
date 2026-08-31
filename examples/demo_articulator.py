@@ -39,6 +39,12 @@ from ogdd.articulator.guided_protrusion import (
 from ogdd.articulator.protrusion_controller import (
     ProtrusionController,
 )
+from ogdd.articulator.combined_movement import (
+    CombinedMovement,
+)
+from ogdd.articulator.combined_controller import (
+    CombinedController,
+)
 from ogdd.io.stl import STLReader
 from ogdd.articulator.condylar_guide_builder import (
     CondylarGuideBuilder,
@@ -207,6 +213,35 @@ def main() -> None:
         step_mm=1.0,
     )
 
+    combined_movement = CombinedMovement(
+        assembly=assembly,
+        right_excursion=right_excursion,
+        left_excursion=left_excursion,
+        protrusion=protrusion,
+    )
+
+    combined_controller = CombinedController(
+        movement=combined_movement,
+        maximum_opening_angle_degrees=(
+            controller.maximum_angle_degrees
+        ),
+        maximum_lateral_angle_degrees=(
+            lateral_controller.maximum_angle_degrees
+        ),
+        maximum_protrusion_distance_mm=(
+            protrusion_controller.maximum_distance_mm
+        ),
+        opening_step_degrees=(
+            controller.step_degrees
+        ),
+        lateral_step_degrees=(
+            lateral_controller.step_degrees
+        ),
+        protrusion_step_mm=(
+            protrusion_controller.step_mm
+        ),
+    )
+
     # --------------------------------------------------
     # 5. Verify movement with the real mesh
     # --------------------------------------------------
@@ -246,6 +281,27 @@ def main() -> None:
     )
 
     lateral_controller.reset()
+
+    centric_combined_position = (
+        combined_controller.position
+    )
+
+    combined_position = (
+        combined_controller.set_position(
+            opening_angle_degrees=10.0,
+            lateral_angle_degrees=3.0,
+            protrusion_distance_mm=5.0,
+        )
+    )
+
+    combined_mesh_changed = (
+        not np.allclose(
+            centric_combined_position.mesh.vertices,
+            combined_position.mesh.vertices,
+        )
+    )
+
+    combined_controller.reset()
 
     centric_protrusive_position = (
         protrusion_controller.position
@@ -375,6 +431,10 @@ def main() -> None:
         f"{left_condyle_follows_guide}"
     )
     print(
+        f"Combined mesh   : "
+        f"{combined_mesh_changed}"
+    )
+    print(
         f"Right guidance : "
         f"{condylar_guides.right_guide.angle_degrees:.2f} deg"
     )
@@ -477,7 +537,7 @@ def main() -> None:
             quad_face,
         )
 
-    initial_position = controller.position
+    initial_position = combined_controller.position
 
     faces = np.hstack(
         [
@@ -659,7 +719,7 @@ def main() -> None:
     )
 
     plotter.add_text(
-        "Vertical: opening | Lower: lateral | Upper: protrusion",
+        "Combined movement: opening | lateral | protrusion",
         position="upper_left",
         font_size=12,
     )
@@ -838,24 +898,18 @@ def main() -> None:
         angle_degrees: float,
     ) -> None:
         """
-        Show opening from centric relation.
+        Combine opening with the current movements.
         """
 
-        lateral_controller.reset()
-        protrusion_controller.reset()
-
-        set_slider_value(
-            name="lateral",
-            value=0.0,
-        )
-
-        set_slider_value(
-            name="protrusion",
-            value=0.0,
-        )
-
-        position = controller.set_angle(
-            angle_degrees
+        position = combined_controller.set_opening(
+            float(
+                np.clip(
+                    angle_degrees,
+                    0.0,
+                    combined_controller
+                    .maximum_opening_angle_degrees,
+                )
+            )
         )
 
         update_mandibular_visuals(
@@ -866,24 +920,26 @@ def main() -> None:
         angle_degrees: float,
     ) -> None:
         """
-        Show lateral movement from closed position.
+        Combine lateral movement with the current state.
         """
 
-        controller.reset()
-        protrusion_controller.reset()
-
-        set_slider_value(
-            name="opening",
-            value=0.0,
+        clamped_angle = float(
+            np.clip(
+                angle_degrees,
+                -combined_controller
+                .maximum_left_lateral_angle_degrees,
+                combined_controller
+                .maximum_right_lateral_angle_degrees,
+            )
         )
 
         set_slider_value(
-            name="protrusion",
-            value=0.0,
+            name="lateral",
+            value=clamped_angle,
         )
 
-        position = lateral_controller.set_angle(
-            angle_degrees
+        position = combined_controller.set_lateral(
+            clamped_angle
         )
 
         update_mandibular_visuals(
@@ -894,24 +950,25 @@ def main() -> None:
         distance_mm: float,
     ) -> None:
         """
-        Show guided protrusion from centric relation.
+        Combine protrusion with the current state.
         """
 
-        controller.reset()
-        lateral_controller.reset()
-
-        set_slider_value(
-            name="opening",
-            value=0.0,
+        clamped_distance = float(
+            np.clip(
+                distance_mm,
+                0.0,
+                combined_controller
+                .maximum_current_protrusion_distance_mm,
+            )
         )
 
         set_slider_value(
-            name="lateral",
-            value=0.0,
+            name="protrusion",
+            value=clamped_distance,
         )
 
-        position = protrusion_controller.set_distance(
-            distance_mm
+        position = combined_controller.set_protrusion(
+            clamped_distance
         )
 
         update_mandibular_visuals(
@@ -922,9 +979,10 @@ def main() -> None:
         callback=update_opening,
         rng=[
             0.0,
-            controller.maximum_angle_degrees,
+            combined_controller
+            .maximum_opening_angle_degrees,
         ],
-        value=controller.angle_degrees,
+        value=combined_controller.opening_angle_degrees,
         title="Opening angle",
         pointa=(0.08, 0.20),
         pointb=(0.08, 0.80),
@@ -938,10 +996,12 @@ def main() -> None:
     lateral_slider = plotter.add_slider_widget(
         callback=update_lateral,
         rng=[
-            -lateral_controller.maximum_angle_degrees,
-            lateral_controller.maximum_angle_degrees,
+            -combined_controller
+            .maximum_lateral_angle_degrees,
+            combined_controller
+            .maximum_lateral_angle_degrees,
         ],
-        value=lateral_controller.angle_degrees,
+        value=combined_controller.lateral_angle_degrees,
         title="LEFT   -   RC   -   RIGHT",
         pointa=(0.25, 0.10),
         pointb=(0.80, 0.10),
@@ -956,9 +1016,10 @@ def main() -> None:
         callback=update_protrusion,
         rng=[
             0.0,
-            protrusion_controller.maximum_distance_mm,
+            combined_controller
+            .maximum_protrusion_distance_mm,
         ],
-        value=protrusion_controller.distance_mm,
+        value=combined_controller.protrusion_distance_mm,
         title="PROTRUSION (mm)",
         pointa=(0.25, 0.90),
         pointb=(0.80, 0.90),
