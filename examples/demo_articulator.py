@@ -45,6 +45,18 @@ from ogdd.articulator.combined_movement import (
 from ogdd.articulator.combined_controller import (
     CombinedController,
 )
+from ogdd.articulator.occlusal_closure import (
+    OcclusalClosure,
+)
+from ogdd.articulator.occlusal_closure_controller import (
+    OcclusalClosureController,
+)
+from ogdd.articulator.functional_calibration_controller import (
+    FunctionalCalibrationController,
+)
+from ogdd.articulator.functional_limits import (
+    FunctionalLimitKind,
+)
 from ogdd.io.stl import STLReader
 from ogdd.articulator.condylar_guide_builder import (
     CondylarGuideBuilder,
@@ -240,6 +252,21 @@ def main() -> None:
         protrusion_step_mm=(
             protrusion_controller.step_mm
         ),
+    )
+
+    occlusal_closure_controller = (
+        OcclusalClosureController(
+            closure=OcclusalClosure(),
+            base_position=combined_controller.position,
+            step_degrees=0.1,
+        )
+    )
+
+    functional_controller = (
+        FunctionalCalibrationController(
+            combined=combined_controller,
+            closure=occlusal_closure_controller,
+        )
     )
 
     # --------------------------------------------------
@@ -537,7 +564,7 @@ def main() -> None:
             quad_face,
         )
 
-    initial_position = combined_controller.position
+    initial_position = functional_controller.position
 
     faces = np.hstack(
         [
@@ -666,7 +693,9 @@ def main() -> None:
         phi_resolution=48,
     )
 
-    plotter = pv.Plotter()
+    plotter = pv.Plotter(
+        window_size=(1600, 900)
+    )
 
     plotter.add_mesh(
         maxillary_surface,
@@ -869,6 +898,9 @@ def main() -> None:
         plotter.render()
 
     slider_widgets = {}
+    status_message = {
+        "text": "Ready for operator calibration."
+    }
 
     def set_slider_value(
         name: str,
@@ -894,6 +926,197 @@ def main() -> None:
                 value
             )
 
+    def synchronize_sliders() -> None:
+        """
+        Reflect the accepted controller position.
+        """
+
+        set_slider_value(
+            name="opening",
+            value=(
+                functional_controller
+                .opening_angle_degrees
+            ),
+        )
+        set_slider_value(
+            name="lateral",
+            value=(
+                functional_controller
+                .lateral_angle_degrees
+            ),
+        )
+        set_slider_value(
+            name="protrusion",
+            value=(
+                functional_controller
+                .protrusion_distance_mm
+            ),
+        )
+
+    def formatted_limit(
+        limit,
+        movement_name: str,
+        movement_value: float,
+        movement_unit: str,
+    ) -> str:
+        """
+        Format one saved endpoint for the status panel.
+        """
+
+        if limit is None:
+            return f"{movement_name}: not calibrated"
+
+        return (
+            f"{movement_name}: {movement_value:.2f} "
+            f"{movement_unit} | "
+            f"{formatted_adjustment(limit.adjustment_angle_degrees)}"
+        )
+
+    def formatted_adjustment(
+        angle_degrees: float,
+    ) -> str:
+        """
+        Describe the direction of one fine adjustment.
+        """
+
+        if np.isclose(angle_degrees, 0.0):
+            return "no fine adjustment"
+
+        direction = "opening"
+
+        if angle_degrees < 0.0:
+            direction = "closure"
+
+        return (
+            f"{direction} "
+            f"{abs(angle_degrees):.1f} deg"
+        )
+
+    def refresh_status() -> None:
+        """
+        Show current movement and saved functional stops.
+        """
+
+        protrusive_limit = (
+            functional_controller.limits.protrusive
+        )
+        right_limit = (
+            functional_controller.limits.right_canine
+        )
+        left_limit = (
+            functional_controller.limits.left_canine
+        )
+
+        protrusive_value = 0.0
+        right_value = 0.0
+        left_value = 0.0
+
+        if protrusive_limit is not None:
+            protrusive_value = (
+                protrusive_limit.protrusion_distance_mm
+            )
+
+        if right_limit is not None:
+            right_value = (
+                right_limit.lateral_angle_degrees
+            )
+
+        if left_limit is not None:
+            left_value = abs(
+                left_limit.lateral_angle_degrees
+            )
+
+        text = "\n".join([
+            "OPERATOR FUNCTIONAL CALIBRATION",
+            (
+                "Current: "
+                f"O {functional_controller.opening_angle_degrees:.1f} deg | "
+                f"L {functional_controller.lateral_angle_degrees:+.2f} deg | "
+                f"P {functional_controller.protrusion_distance_mm:.2f} mm"
+            ),
+            (
+                "Fine adjustment: "
+                f"{formatted_adjustment(functional_controller.adjustment_angle_degrees)}"
+            ),
+            formatted_limit(
+                protrusive_limit,
+                "Protrusive",
+                protrusive_value,
+                "mm",
+            ),
+            formatted_limit(
+                right_limit,
+                "Right canine",
+                right_value,
+                "deg",
+            ),
+            formatted_limit(
+                left_limit,
+                "Left canine",
+                left_value,
+                "deg",
+            ),
+            status_message["text"],
+        ])
+
+        plotter.add_text(
+            text,
+            position=(1030, 650),
+            font_size=9,
+            name="functional_status",
+        )
+
+    def show_position(
+        position,
+        message: str,
+    ) -> None:
+        """
+        Synchronize controls and render an accepted state.
+        """
+
+        status_message["text"] = message
+        synchronize_sliders()
+        refresh_status()
+        update_mandibular_visuals(position)
+
+    def run_action(
+        action,
+        success_message: str,
+        update_geometry: bool = True,
+    ) -> None:
+        """
+        Execute one operator action with visible feedback.
+        """
+
+        try:
+            result = action()
+        except ValueError as error:
+            status_message["text"] = f"Not accepted: {error}"
+            refresh_status()
+            plotter.render()
+            return
+
+        if update_geometry:
+            show_position(
+                result,
+                success_message,
+            )
+            return
+
+        status_message["text"] = success_message
+        synchronize_sliders()
+        refresh_status()
+        plotter.render()
+
+    def go_to_centric_relation():
+        """
+        Return every movement and fine adjustment to RC.
+        """
+
+        functional_controller.reset_movement()
+
+        return functional_controller.reset_adjustment()
+
     def update_opening(
         angle_degrees: float,
     ) -> None:
@@ -901,7 +1124,7 @@ def main() -> None:
         Combine opening with the current movements.
         """
 
-        position = combined_controller.set_opening(
+        position = functional_controller.set_opening(
             float(
                 np.clip(
                     angle_degrees,
@@ -912,8 +1135,9 @@ def main() -> None:
             )
         )
 
-        update_mandibular_visuals(
-            position
+        show_position(
+            position,
+            "Base opening accepted.",
         )
 
     def update_lateral(
@@ -926,9 +1150,9 @@ def main() -> None:
         clamped_angle = float(
             np.clip(
                 angle_degrees,
-                -combined_controller
+                -functional_controller
                 .maximum_left_lateral_angle_degrees,
-                combined_controller
+                functional_controller
                 .maximum_right_lateral_angle_degrees,
             )
         )
@@ -938,12 +1162,13 @@ def main() -> None:
             value=clamped_angle,
         )
 
-        position = combined_controller.set_lateral(
+        position = functional_controller.set_lateral(
             clamped_angle
         )
 
-        update_mandibular_visuals(
-            position
+        show_position(
+            position,
+            "Lateral position accepted.",
         )
 
     def update_protrusion(
@@ -957,8 +1182,8 @@ def main() -> None:
             np.clip(
                 distance_mm,
                 0.0,
-                combined_controller
-                .maximum_current_protrusion_distance_mm,
+                functional_controller
+                .maximum_protrusion_distance_mm,
             )
         )
 
@@ -967,12 +1192,13 @@ def main() -> None:
             value=clamped_distance,
         )
 
-        position = combined_controller.set_protrusion(
+        position = functional_controller.set_protrusion(
             clamped_distance
         )
 
-        update_mandibular_visuals(
-            position
+        show_position(
+            position,
+            "Protrusive position accepted.",
         )
 
     opening_slider = plotter.add_slider_widget(
@@ -982,7 +1208,7 @@ def main() -> None:
             combined_controller
             .maximum_opening_angle_degrees,
         ],
-        value=combined_controller.opening_angle_degrees,
+        value=functional_controller.opening_angle_degrees,
         title="Opening angle",
         pointa=(0.08, 0.20),
         pointb=(0.08, 0.80),
@@ -1001,7 +1227,7 @@ def main() -> None:
             combined_controller
             .maximum_lateral_angle_degrees,
         ],
-        value=combined_controller.lateral_angle_degrees,
+        value=functional_controller.lateral_angle_degrees,
         title="LEFT   -   RC   -   RIGHT",
         pointa=(0.25, 0.10),
         pointb=(0.80, 0.10),
@@ -1019,7 +1245,7 @@ def main() -> None:
             combined_controller
             .maximum_protrusion_distance_mm,
         ],
-        value=combined_controller.protrusion_distance_mm,
+        value=functional_controller.protrusion_distance_mm,
         title="PROTRUSION (mm)",
         pointa=(0.25, 0.90),
         pointb=(0.80, 0.90),
@@ -1030,8 +1256,172 @@ def main() -> None:
         protrusion_slider
     )
 
+    def add_action_button(
+        label: str,
+        action,
+        position: tuple[int, int],
+        color: str,
+    ) -> None:
+        """
+        Add a neutral push-like action button and label.
+        """
+
+        plotter.add_checkbox_button_widget(
+            callback=lambda _checked: action(),
+            value=False,
+            position=position,
+            size=22,
+            border_size=2,
+            color_on=color,
+            color_off=color,
+            background_color="dimgray",
+        )
+
+        plotter.add_text(
+            label,
+            position=(
+                position[0] + 30,
+                position[1] + 3,
+            ),
+            font_size=8,
+        )
+
+    add_action_button(
+        "CLOSE 0.1 deg",
+        lambda: run_action(
+            functional_controller.adjust_close,
+            "Fine closure: -0.1 deg.",
+        ),
+        (1280, 500),
+        "deepskyblue",
+    )
+
+    add_action_button(
+        "OPEN 0.1 deg",
+        lambda: run_action(
+            functional_controller.adjust_open,
+            "Fine opening: +0.1 deg.",
+        ),
+        (1280, 465),
+        "deepskyblue",
+    )
+
+    add_action_button(
+        "RESET FINE",
+        lambda: run_action(
+            functional_controller.reset_adjustment,
+            "Fine closure reset.",
+        ),
+        (1280, 430),
+        "deepskyblue",
+    )
+
+    add_action_button(
+        "SAVE PROTRUSIVE",
+        lambda: run_action(
+            functional_controller.save_protrusive_limit,
+            "Protrusive edge-to-edge saved.",
+            update_geometry=False,
+        ),
+        (1280, 360),
+        "limegreen",
+    )
+
+    add_action_button(
+        "SAVE RIGHT CANINE",
+        lambda: run_action(
+            functional_controller.save_right_canine_limit,
+            "Right canine cusp-to-cusp saved.",
+            update_geometry=False,
+        ),
+        (1280, 325),
+        "limegreen",
+    )
+
+    add_action_button(
+        "SAVE LEFT CANINE",
+        lambda: run_action(
+            functional_controller.save_left_canine_limit,
+            "Left canine cusp-to-cusp saved.",
+            update_geometry=False,
+        ),
+        (1280, 290),
+        "limegreen",
+    )
+
+    add_action_button(
+        "GO PROTRUSIVE",
+        lambda: run_action(
+            lambda: functional_controller.go_to_limit(
+                FunctionalLimitKind.PROTRUSIVE_EDGE_TO_EDGE
+            ),
+            "Returned to protrusive edge-to-edge.",
+        ),
+        (1280, 220),
+        "gold",
+    )
+
+    add_action_button(
+        "GO RIGHT CANINE",
+        lambda: run_action(
+            lambda: functional_controller.go_to_limit(
+                FunctionalLimitKind.RIGHT_CANINE_CUSP_TO_CUSP
+            ),
+            "Returned to right canine cusp-to-cusp.",
+        ),
+        (1280, 185),
+        "gold",
+    )
+
+    add_action_button(
+        "GO LEFT CANINE",
+        lambda: run_action(
+            lambda: functional_controller.go_to_limit(
+                FunctionalLimitKind.LEFT_CANINE_CUSP_TO_CUSP
+            ),
+            "Returned to left canine cusp-to-cusp.",
+        ),
+        (1280, 150),
+        "gold",
+    )
+
+    add_action_button(
+        "CENTER LATERAL",
+        lambda: run_action(
+            lambda: functional_controller.set_lateral(0.0),
+            "Lateral movement returned to zero.",
+        ),
+        (1030, 115),
+        "mediumorchid",
+    )
+
+    add_action_button(
+        "GO TO RC",
+        lambda: run_action(
+            go_to_centric_relation,
+            "Returned to centric relation.",
+        ),
+        (1280, 115),
+        "purple",
+    )
+
+    add_action_button(
+        "CLEAR LIMITS",
+        lambda: run_action(
+            functional_controller.clear_limits,
+            "Functional limits cleared; recalibration enabled.",
+            update_geometry=False,
+        ),
+        (1280, 80),
+        "tomato",
+    )
+
+    refresh_status()
+
     print("\nOpening interactive viewer...")
 
     plotter.show()
+
+
 if __name__ == "__main__":
     main()
