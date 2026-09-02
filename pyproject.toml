@@ -20,7 +20,8 @@ authors = [
 ]
 
 dependencies = [
-    "numpy>=1.26"
+    "numpy>=1.26",
+    "scipy>=1.16"
 ]
 
 classifiers = [
