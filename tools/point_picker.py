@@ -13,7 +13,8 @@ import pyvista as pv
 from ogdd.anatomy.dental_model import DentalModel
 from ogdd.anatomy.landmark import Landmark
 from ogdd.io.stl import STLReader
-
+from ogdd.articulator.bonwill_builder import BonwillBuilder
+from ogdd.articulator.configuration import ArticulatorConfiguration
 
 # ------------------------------------------------------------
 # Archivo STL de prueba
@@ -94,9 +95,13 @@ plotter.add_text(
 
 def display_balkwill():
     """
-    Construye y muestra el triángulo de Balkwill
-    después de seleccionar los tres landmarks.
+    Construye y muestra los triángulos de Balkwill
+    y Bonwill después de seleccionar los tres landmarks.
     """
+
+    # --------------------------------------------------------
+    # Balkwill
+    # --------------------------------------------------------
 
     balkwill = model.balkwill_triangle
 
@@ -105,7 +110,30 @@ def display_balkwill():
     midline = balkwill.dental_midline.point
 
     # --------------------------------------------------------
-    # Dibujar triángulo
+    # Sistema anatómico
+    # --------------------------------------------------------
+
+    coordinate_system = model.coordinate_system
+
+    # --------------------------------------------------------
+    # Virtual Bonwill triangle
+    # --------------------------------------------------------
+
+    configuration = ArticulatorConfiguration()
+
+    bonwill = BonwillBuilder.build(
+        coordinate_system=coordinate_system,
+        dental_midline=model.get_landmark(
+            "DENTAL_MIDLINE"
+        ),
+        configuration=configuration,
+    )
+
+    right_condyle = bonwill.right_condyle.point
+    left_condyle = bonwill.left_condyle.point
+
+    # --------------------------------------------------------
+    # Dibujar Balkwill
     # --------------------------------------------------------
 
     plotter.add_mesh(
@@ -127,10 +155,55 @@ def display_balkwill():
     )
 
     # --------------------------------------------------------
-    # Sistema anatómico
+    # Dibujar Bonwill
     # --------------------------------------------------------
 
-    coordinate_system = model.coordinate_system
+    plotter.add_mesh(
+        pv.Line(
+            right_condyle,
+            left_condyle,
+        ),
+        line_width=5,
+        color="cyan",
+    )
+
+    plotter.add_mesh(
+        pv.Line(
+            left_condyle,
+            midline,
+        ),
+        line_width=5,
+        color="cyan",
+    )
+
+    plotter.add_mesh(
+        pv.Line(
+            midline,
+            right_condyle,
+        ),
+        line_width=5,
+        color="cyan",
+    )
+
+    plotter.add_point_labels(
+        np.array(
+            [
+                right_condyle,
+                left_condyle,
+            ]
+        ),
+        [
+            "RIGHT CONDYLE",
+            "LEFT CONDYLE",
+        ],
+        point_size=14,
+        font_size=12,
+        render_points_as_spheres=True,
+    )
+
+    # --------------------------------------------------------
+    # Dibujar ejes anatómicos
+    # --------------------------------------------------------
 
     origin = np.array(
         [coordinate_system.origin]
@@ -160,7 +233,7 @@ def display_balkwill():
     )
 
     # --------------------------------------------------------
-    # Resultados
+    # Resultados Balkwill
     # --------------------------------------------------------
 
     print()
@@ -188,6 +261,10 @@ def display_balkwill():
         f"{balkwill.symmetry_difference:.6f}"
     )
 
+    # --------------------------------------------------------
+    # Resultados sistema anatómico
+    # --------------------------------------------------------
+
     print()
     print("ANATOMICAL COORDINATE SYSTEM")
     print("-" * 30)
@@ -197,13 +274,54 @@ def display_balkwill():
     print(f"+Y     : {coordinate_system.y_axis}")
     print(f"+Z     : {coordinate_system.z_axis}")
 
+    # --------------------------------------------------------
+    # Resultados Bonwill
+    # --------------------------------------------------------
+
+    print()
+    print("=" * 50)
+    print("VIRTUAL BONWILL TRIANGLE")
+    print("=" * 50)
+
+    print(
+        f"Articulator size     : "
+        f"{configuration.intercondylar_width:.1f} mm"
+    )
+
+    print(
+        f"Balkwill angle       : "
+        f"{configuration.balkwill_angle_degrees:.1f} degrees"
+    )
+
+    print(
+        f"Right side           : "
+        f"{bonwill.right_side:.6f}"
+    )
+
+    print(
+        f"Left side            : "
+        f"{bonwill.left_side:.6f}"
+    )
+
+    print(
+        f"Condylar width       : "
+        f"{bonwill.condylar_width:.6f}"
+    )
+
+    print()
+    print(f"Right condyle : {right_condyle}")
+    print(f"Left condyle  : {left_condyle}")
+
+    # --------------------------------------------------------
+    # Estado final
+    # --------------------------------------------------------
+
     plotter.add_text(
-        "Balkwill ready",
+        "Balkwill + Bonwill ready",
         position="upper_left",
         font_size=12,
         name="instruction",
     )
-
 
 # ------------------------------------------------------------
 # Selección de landmarks
@@ -290,7 +408,6 @@ def pick_point(point):
         )
 
         display_balkwill()
-
 
 # ------------------------------------------------------------
 # Activar selección
