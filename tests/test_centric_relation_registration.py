@@ -410,6 +410,240 @@ def test_both_surface_registrations_have_zero_error():
     )
 
 
+def test_condylar_displacement_applies_rc_to_mic_movement():
+    result = register_case()
+
+    right_rc = np.array(
+        [55.0, 18.0, 32.0]
+    )
+
+    left_rc = np.array(
+        [-55.0, 18.0, 32.0]
+    )
+
+    displacement = result.condylar_displacement(
+        right_condyle_point=right_rc,
+        left_condyle_point=left_rc,
+    )
+
+    expected_points = (
+        expected_rc_to_mic_transform()
+        .apply(
+            np.vstack(
+                [
+                    right_rc,
+                    left_rc,
+                ]
+            )
+        )
+    )
+
+    np.testing.assert_allclose(
+        displacement.right_mic_point,
+        expected_points[0],
+        atol=1e-10,
+    )
+
+    np.testing.assert_allclose(
+        displacement.left_mic_point,
+        expected_points[1],
+        atol=1e-10,
+    )
+
+
+def test_condylar_vectors_point_from_rc_to_mic():
+    result = register_case()
+
+    right_rc = np.array(
+        [55.0, 18.0, 32.0]
+    )
+
+    left_rc = np.array(
+        [-55.0, 18.0, 32.0]
+    )
+
+    displacement = result.condylar_displacement(
+        right_condyle_point=right_rc,
+        left_condyle_point=left_rc,
+    )
+
+    np.testing.assert_allclose(
+        displacement.right_vector,
+        (
+            displacement.right_mic_point
+            - right_rc
+        ),
+    )
+
+    np.testing.assert_allclose(
+        displacement.left_vector,
+        (
+            displacement.left_mic_point
+            - left_rc
+        ),
+    )
+
+
+def test_condylar_distances_are_vector_magnitudes():
+    result = register_case()
+
+    displacement = result.condylar_displacement(
+        right_condyle_point=[55.0, 18.0, 32.0],
+        left_condyle_point=[-55.0, 18.0, 32.0],
+    )
+
+    assert (
+        displacement.right_distance_mm
+        == pytest.approx(
+            np.linalg.norm(
+                displacement.right_vector
+            )
+        )
+    )
+
+    assert (
+        displacement.left_distance_mm
+        == pytest.approx(
+            np.linalg.norm(
+                displacement.left_vector
+            )
+        )
+    )
+
+
+def test_pure_translation_moves_both_condyles_equally():
+    translation = np.array(
+        [0.2, -0.3, 0.1]
+    )
+
+    case = build_registration_case(
+        rc_to_mic=Transform.translation(
+            translation
+        )
+    )
+
+    result = CentricRelationRegistration.register(
+        maxillary_mesh=case[0],
+        mandibular_rc_mesh=case[1],
+        mic_record=case[2],
+        trim_fraction=1.0,
+        sample_size=None,
+        tolerance=1e-12,
+    )
+
+    displacement = result.condylar_displacement(
+        right_condyle_point=[55.0, 18.0, 32.0],
+        left_condyle_point=[-55.0, 18.0, 32.0],
+    )
+
+    np.testing.assert_allclose(
+        displacement.right_vector,
+        translation,
+        atol=1e-10,
+    )
+
+    np.testing.assert_allclose(
+        displacement.left_vector,
+        translation,
+        atol=1e-10,
+    )
+
+
+def test_condylar_displacement_does_not_change_inputs():
+    result = register_case()
+
+    right_rc = np.array(
+        [55.0, 18.0, 32.0]
+    )
+
+    left_rc = np.array(
+        [-55.0, 18.0, 32.0]
+    )
+
+    original_right = right_rc.copy()
+    original_left = left_rc.copy()
+
+    result.condylar_displacement(
+        right_condyle_point=right_rc,
+        left_condyle_point=left_rc,
+    )
+
+    np.testing.assert_array_equal(
+        right_rc,
+        original_right,
+    )
+
+    np.testing.assert_array_equal(
+        left_rc,
+        original_left,
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "argument_name",
+        "invalid_point",
+        "expected_message",
+    ),
+    [
+        (
+            "right_condyle_point",
+            [1.0, 2.0],
+            "Right condyle point",
+        ),
+        (
+            "left_condyle_point",
+            [1.0, 2.0, 3.0, 4.0],
+            "Left condyle point",
+        ),
+        (
+            "right_condyle_point",
+            [1.0, np.nan, 3.0],
+            "Right condyle point",
+        ),
+        (
+            "left_condyle_point",
+            [1.0, 2.0, np.inf],
+            "Left condyle point",
+        ),
+    ],
+)
+def test_invalid_condylar_point_is_rejected(
+    argument_name,
+    invalid_point,
+    expected_message,
+):
+    result = register_case()
+
+    arguments = {
+        "right_condyle_point": [55.0, 18.0, 32.0],
+        "left_condyle_point": [-55.0, 18.0, 32.0],
+    }
+
+    arguments[argument_name] = invalid_point
+
+    with pytest.raises(
+        ValueError,
+        match=expected_message,
+    ):
+        result.condylar_displacement(
+            **arguments
+        )
+
+
+def test_non_numeric_condylar_point_is_rejected():
+    result = register_case()
+
+    with pytest.raises(
+        TypeError,
+        match="Right condyle point",
+    ):
+        result.condylar_displacement(
+            right_condyle_point="not a point",
+            left_condyle_point=[-55.0, 18.0, 32.0],
+        )
+
+
 def test_registration_does_not_change_input_geometry():
     (
         maxillary_mesh,

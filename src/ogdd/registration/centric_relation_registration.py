@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from ogdd.geometry.transform import Transform
 from ogdd.mesh import Mesh
 from ogdd.registration.occlusal_record import (
@@ -19,6 +21,72 @@ from ogdd.registration.surface_registration import (
     SurfaceRegistration,
     SurfaceRegistrationResult,
 )
+
+
+@dataclass(frozen=True)
+class CondylarDisplacementResult:
+    """
+    Bilateral condylar displacement from RC to MIC.
+
+    Every point is expressed in the same coordinate
+    system as the RC mounting. The displacement vectors
+    point from centric relation to maximum
+    intercuspation.
+    """
+
+    right_rc_point: np.ndarray
+
+    right_mic_point: np.ndarray
+
+    left_rc_point: np.ndarray
+
+    left_mic_point: np.ndarray
+
+    @property
+    def right_vector(self) -> np.ndarray:
+        """
+        Right-condyle displacement vector RC -> MIC.
+        """
+
+        return (
+            self.right_mic_point
+            - self.right_rc_point
+        )
+
+    @property
+    def left_vector(self) -> np.ndarray:
+        """
+        Left-condyle displacement vector RC -> MIC.
+        """
+
+        return (
+            self.left_mic_point
+            - self.left_rc_point
+        )
+
+    @property
+    def right_distance_mm(self) -> float:
+        """
+        Total displacement of the right condyle.
+        """
+
+        return float(
+            np.linalg.norm(
+                self.right_vector
+            )
+        )
+
+    @property
+    def left_distance_mm(self) -> float:
+        """
+        Total displacement of the left condyle.
+        """
+
+        return float(
+            np.linalg.norm(
+                self.left_vector
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -59,6 +127,95 @@ class CentricRelationRegistrationResult:
             self.maxillary_registration.converged
             and self.mandibular_registration.converged
         )
+
+    def condylar_displacement(
+        self,
+        *,
+        right_condyle_point,
+        left_condyle_point,
+    ) -> CondylarDisplacementResult:
+        """
+        Propagate the mandibular RC -> MIC movement to
+        both condylar centers.
+
+        The condyles are not registered independently.
+        They receive the same rigid transform recovered
+        for the complete mandible.
+        """
+
+        right_rc_point = _validated_point(
+            point=right_condyle_point,
+            name="Right condyle point",
+        )
+
+        left_rc_point = _validated_point(
+            point=left_condyle_point,
+            name="Left condyle point",
+        )
+
+        rc_points = np.vstack(
+            [
+                right_rc_point,
+                left_rc_point,
+            ]
+        )
+
+        mic_points = (
+            self
+            .mandibular_rc_to_mic_transform
+            .apply(rc_points)
+        )
+
+        return CondylarDisplacementResult(
+            right_rc_point=(
+                right_rc_point.copy()
+            ),
+            right_mic_point=(
+                mic_points[0].copy()
+            ),
+            left_rc_point=(
+                left_rc_point.copy()
+            ),
+            left_mic_point=(
+                mic_points[1].copy()
+            ),
+        )
+
+
+def _validated_point(
+    point,
+    name: str,
+) -> np.ndarray:
+    """
+    Validate one finite three-dimensional point.
+    """
+
+    try:
+        point = np.asarray(
+            point,
+            dtype=float,
+        )
+    except (
+        TypeError,
+        ValueError,
+    ) as error:
+        raise TypeError(
+            f"{name} must be numeric."
+        ) from error
+
+    if point.shape != (3,):
+        raise ValueError(
+            f"{name} must have shape (3,)."
+        )
+
+    if not np.all(
+        np.isfinite(point)
+    ):
+        raise ValueError(
+            f"{name} must contain only finite values."
+        )
+
+    return point.copy()
 
 
 def _validated_mesh(
