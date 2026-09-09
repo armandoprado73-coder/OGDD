@@ -24,9 +24,13 @@ from PySide6.QtWidgets import (
 )
 
 from ogdd.anatomy.dental_model import DentalModel
+from ogdd.anatomy.hinge_axis import HingeAxis
 from ogdd.anatomy.landmark import Landmark
+from ogdd.articulator.bonwill_builder import BonwillBuilder
+from ogdd.articulator.condylar_guide_builder import CondylarGuideBuilder
 from ogdd.io.stl import STLReader
 
+from .mounting_panel import MountingPanel
 from .orientation_panel import OrientationPanel
 from .scene_view import SceneView
 from .study_import_dialog import StudyFileSelection, StudyImportDialog
@@ -45,6 +49,8 @@ class MainWindow(QMainWindow):
         ("landmarks", "Landmarks"),
         ("balkwill", "Triángulo de Balkwill"),
         ("bonwill", "Triángulo de Bonwill"),
+        ("virtual_condyles", "Cóndilos virtuales"),
+        ("hinge_axis", "Eje de bisagra"),
         ("axes", "Ejes anatómicos"),
         ("condylar_guides", "Guías condilares"),
         ("functional_limits", "Límites funcionales"),
@@ -73,6 +79,10 @@ class MainWindow(QMainWindow):
         self._landmark_points: dict[str, np.ndarray] = {}
         self._coordinate_system = None
         self._visibility_before_pick: dict[str, bool] = {}
+        self._articulator_configuration = None
+        self._bonwill = None
+        self._hinge_axis = None
+        self._condylar_guides = None
 
         self.scene = SceneView(self)
         self.setCentralWidget(self.scene)
@@ -145,6 +155,15 @@ class MainWindow(QMainWindow):
             self._reset_orientation
         )
 
+        self.mounting_panel = MountingPanel()
+        self.mounting_panel.setVisible(False)
+        self.mounting_panel.build_requested.connect(
+            self._build_rc_mounting
+        )
+        self.mounting_panel.reset_requested.connect(
+            self._clear_mounting_state
+        )
+
         self.workflow_message = QLabel(
             "Importe los modelos y el registro que forman el estudio."
         )
@@ -159,6 +178,7 @@ class MainWindow(QMainWindow):
         workflow_layout.addWidget(self.workflow_list)
         workflow_layout.addWidget(self.workflow_message)
         workflow_layout.addWidget(self.orientation_panel, 1)
+        workflow_layout.addWidget(self.mounting_panel, 1)
 
         self.workflow_list.currentRowChanged.connect(
             self._workflow_step_changed
@@ -563,8 +583,12 @@ class MainWindow(QMainWindow):
         """Show contextual controls for the selected clinical step."""
 
         orientation_selected = row == 1
+        mounting_selected = row == 2
         self.orientation_panel.setVisible(orientation_selected)
-        self.workflow_message.setVisible(not orientation_selected)
+        self.mounting_panel.setVisible(mounting_selected)
+        self.workflow_message.setVisible(
+            not orientation_selected and not mounting_selected
+        )
 
         messages = {
             0: "Importe los modelos y el registro que forman el estudio.",
@@ -574,10 +598,11 @@ class MainWindow(QMainWindow):
             5: "Aquí aparecerá el diagnóstico de desplazamiento RC–MIC.",
             6: "Los resultados podrán revisarse y exportarse aquí.",
         }
-        if not orientation_selected:
+        if not orientation_selected and not mounting_selected:
             self.workflow_message.setText(
                 messages.get(row, "Paso clínico en preparación.")
             )
+        if not orientation_selected:
             self._finish_landmark_pick()
 
     def _start_landmark_pick(self, landmark_name: str) -> None:
@@ -610,7 +635,11 @@ class MainWindow(QMainWindow):
             "mic_record",
             "landmarks",
             "balkwill",
+            "bonwill",
+            "virtual_condyles",
+            "hinge_axis",
             "axes",
+            "condylar_guides",
         ):
             self.scene.set_layer_pickable(
                 layer,
@@ -664,7 +693,11 @@ class MainWindow(QMainWindow):
             "mic_record",
             "landmarks",
             "balkwill",
+            "bonwill",
+            "virtual_condyles",
+            "hinge_axis",
             "axes",
+            "condylar_guides",
         ):
             self.scene.set_layer_pickable(layer, True)
 
@@ -739,6 +772,7 @@ class MainWindow(QMainWindow):
             return
 
         self._coordinate_system = coordinate_system
+        self._clear_mounting_state()
         for layer_name, mesh in self._study_meshes.items():
             self.scene.update_dental_mesh_points(
                 layer_name,
@@ -763,6 +797,7 @@ class MainWindow(QMainWindow):
         self._set_layer_visibility("mandibular_rc", True)
         self._set_layer_visibility("mic_record", False)
         self.orientation_panel.show_coordinate_system(coordinate_system)
+        self.mounting_panel.set_orientation_available(True)
         self._update_anatomical_tree(coordinate_system)
         self.scene.reset_camera()
         self.statusBar().showMessage(
@@ -789,6 +824,7 @@ class MainWindow(QMainWindow):
 
         self._coordinate_system = None
         self._landmark_points.clear()
+        self._clear_mounting_state()
         for layer_name in ("landmarks", "balkwill", "axes"):
             self.scene.clear_layer(layer_name, render=False)
             action = self.layer_actions.get(layer_name)
@@ -825,6 +861,139 @@ class MainWindow(QMainWindow):
                 f"Z {point[2]:.3f} mm",
             )
         QTreeWidgetItem(section, ["Sistema anatómico confirmado"])
+        section.setExpanded(True)
+
+    def _build_rc_mounting(self) -> None:
+        """Construct Bonwill, hinge axis and guides from current settings."""
+
+        if self._coordinate_system is None:
+            QMessageBox.information(
+                self,
+                "Orientación pendiente",
+                "Confirme primero la orientación anatómica.",
+            )
+            return
+
+        configuration = self.mounting_panel.configuration()
+        dental_midline = Landmark(
+            name="DENTAL_MIDLINE",
+            point=self._landmark_points["DENTAL_MIDLINE"].copy(),
+            reference_used="Dental midline",
+        )
+        bonwill = BonwillBuilder.build(
+            coordinate_system=self._coordinate_system,
+            dental_midline=dental_midline,
+            configuration=configuration,
+        )
+        hinge_axis = HingeAxis(
+            left_condyle=bonwill.left_condyle,
+            right_condyle=bonwill.right_condyle,
+        )
+        guide_pair = CondylarGuideBuilder.build(
+            hinge_axis=hinge_axis,
+            coordinate_system=self._coordinate_system,
+            configuration=configuration,
+        )
+
+        self._articulator_configuration = configuration
+        self._bonwill = bonwill
+        self._hinge_axis = hinge_axis
+        self._condylar_guides = guide_pair
+
+        self.scene.show_virtual_bonwill(
+            bonwill,
+            self._coordinate_system,
+        )
+        self.scene.show_hinge_axis(
+            hinge_axis,
+            self._coordinate_system,
+        )
+        self.scene.show_condylar_guides(
+            guide_pair,
+            self._coordinate_system,
+        )
+
+        for layer_name in (
+            "bonwill",
+            "virtual_condyles",
+            "hinge_axis",
+            "condylar_guides",
+        ):
+            action = self.layer_actions[layer_name]
+            action.setEnabled(True)
+            action.setChecked(True)
+            self.scene.set_layer_visible(layer_name, True)
+
+        self.mounting_panel.show_mounting(
+            configuration,
+            guide_pair.right_guide.maximum_translation,
+        )
+        self._update_articulator_tree()
+        self.scene.reset_camera()
+        self.statusBar().showMessage(
+            "Montaje en RC construido — Bonwill, eje y guías confirmados"
+        )
+
+    def _clear_mounting_state(self) -> None:
+        """Remove the virtual mounting while preserving orientation."""
+
+        self._articulator_configuration = None
+        self._bonwill = None
+        self._hinge_axis = None
+        self._condylar_guides = None
+        for layer_name in (
+            "bonwill",
+            "virtual_condyles",
+            "hinge_axis",
+            "condylar_guides",
+        ):
+            self.scene.clear_layer(layer_name, render=False)
+            action = self.layer_actions.get(layer_name)
+            if action is not None:
+                action.setChecked(False)
+                action.setEnabled(False)
+        if hasattr(self, "mounting_panel"):
+            self.mounting_panel.clear()
+            self.mounting_panel.set_orientation_available(
+                self._coordinate_system is not None
+            )
+        section = self.study_sections.get("articulator")
+        if section is not None:
+            section.takeChildren()
+        self.scene.plotter.render()
+
+    def _update_articulator_tree(self) -> None:
+        """Describe the active virtual mounting in the study tree."""
+
+        section = self.study_sections["articulator"]
+        section.takeChildren()
+        configuration = self._articulator_configuration
+        guide_pair = self._condylar_guides
+
+        entries = (
+            (
+                f"Bonwill — {configuration.intercondylar_width:.1f} mm",
+                f"Ángulo de Balkwill: "
+                f"{configuration.balkwill_angle_degrees:.1f}°",
+            ),
+            (
+                f"Eje de bisagra — {self._hinge_axis.length:.1f} mm",
+                "Dirección intercondilar de izquierda a derecha",
+            ),
+            (
+                "Guía condilar derecha",
+                f"{configuration.right_condylar_guidance_degrees:.1f}° | "
+                f"recorrido {guide_pair.right_guide.maximum_translation:.1f} mm",
+            ),
+            (
+                "Guía condilar izquierda",
+                f"{configuration.left_condylar_guidance_degrees:.1f}° | "
+                f"recorrido {guide_pair.left_guide.maximum_translation:.1f} mm",
+            ),
+        )
+        for label, tooltip in entries:
+            item = QTreeWidgetItem(section, [label])
+            item.setToolTip(0, tooltip)
         section.setExpanded(True)
 
     def _show_about(self) -> None:

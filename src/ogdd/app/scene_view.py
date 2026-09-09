@@ -15,8 +15,8 @@ class SceneView(QFrame):
     """Central 3D view with named, independently visible layers."""
 
     _CAMERA_VECTORS = {
-        "front": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
-        "back": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        "front": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        "back": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
         "right": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
         "left": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
         "top": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
@@ -263,6 +263,167 @@ class SceneView(QFrame):
             name="anatomical_axis_labels",
         )
         self.register_actor("axes", label_actor)
+        self.plotter.render()
+
+    def show_virtual_bonwill(
+        self,
+        bonwill,
+        coordinate_system,
+    ) -> None:
+        """Draw Bonwill sides and both spherical virtual condyles."""
+
+        self.clear_layer("bonwill", render=False)
+        self.clear_layer("virtual_condyles", render=False)
+        right = coordinate_system.to_local(
+            bonwill.right_condyle.point
+        )
+        left = coordinate_system.to_local(
+            bonwill.left_condyle.point
+        )
+        midline = coordinate_system.to_local(
+            bonwill.dental_midline.point
+        )
+        sides = pv.lines_from_points(
+            np.asarray([right, midline, left]),
+        )
+        sides_actor = self.plotter.add_mesh(
+            sides,
+            color="crimson",
+            line_width=4,
+            render_lines_as_tubes=True,
+            name="bonwill_sides",
+            reset_camera=False,
+        )
+        self.register_actor("bonwill", sides_actor)
+
+        for side, center in (("right", right), ("left", left)):
+            sphere = pv.Sphere(
+                radius=3.0,
+                center=center,
+                theta_resolution=36,
+                phi_resolution=36,
+            )
+            actor = self.plotter.add_mesh(
+                sphere,
+                color="silver",
+                smooth_shading=True,
+                name=f"{side}_virtual_condyle",
+                reset_camera=False,
+            )
+            self.register_actor("virtual_condyles", actor)
+
+        label_actor = self.plotter.add_point_labels(
+            np.asarray([right, left]),
+            ["CÓNDILO DERECHO", "CÓNDILO IZQUIERDO"],
+            show_points=False,
+            always_visible=True,
+            font_size=11,
+            text_color="crimson",
+            shape=None,
+            name="virtual_condyle_labels",
+        )
+        self.register_actor("virtual_condyles", label_actor)
+
+    def show_hinge_axis(
+        self,
+        hinge_axis,
+        coordinate_system,
+    ) -> None:
+        """Draw the virtual intercondylar hinge axis."""
+
+        self.clear_layer("hinge_axis", render=False)
+        points = coordinate_system.to_local(
+            np.asarray(
+                [
+                    hinge_axis.right_condyle.point,
+                    hinge_axis.left_condyle.point,
+                ]
+            )
+        )
+        line = pv.lines_from_points(points)
+        actor = self.plotter.add_mesh(
+            line,
+            color="white",
+            line_width=7,
+            render_lines_as_tubes=True,
+            name="hinge_axis",
+            reset_camera=False,
+        )
+        self.register_actor("hinge_axis", actor)
+
+    @staticmethod
+    def _quad_surface(points: np.ndarray) -> pv.PolyData:
+        """Create one quadrilateral surface from four ordered points."""
+
+        return pv.PolyData(
+            np.asarray(points, dtype=float),
+            np.asarray([4, 0, 1, 2, 3]),
+        )
+
+    def show_condylar_guides(
+        self,
+        guide_pair,
+        coordinate_system,
+    ) -> None:
+        """Draw both guide surfaces, posterior stops and trajectories."""
+
+        self.clear_layer("condylar_guides", render=False)
+        for side, guide in (
+            ("right", guide_pair.right_guide),
+            ("left", guide_pair.left_guide),
+        ):
+            main_surface = self._quad_surface(
+                coordinate_system.to_local(
+                    guide.main_surface_vertices
+                )
+            )
+            stop_surface = self._quad_surface(
+                coordinate_system.to_local(
+                    guide.posterior_stop_vertices
+                )
+            )
+            main_actor = self.plotter.add_mesh(
+                main_surface,
+                color="orange",
+                opacity=0.65,
+                show_edges=True,
+                edge_color="darkorange",
+                line_width=2,
+                name=f"{side}_condylar_guide",
+                reset_camera=False,
+            )
+            stop_actor = self.plotter.add_mesh(
+                stop_surface,
+                color="tomato",
+                opacity=0.82,
+                show_edges=True,
+                edge_color="darkred",
+                line_width=2,
+                name=f"{side}_posterior_stop",
+                reset_camera=False,
+            )
+            self.register_actor("condylar_guides", main_actor)
+            self.register_actor("condylar_guides", stop_actor)
+
+            trajectory_world = np.asarray(
+                [
+                    guide.condyle_center,
+                    guide.center_at(guide.maximum_translation),
+                ]
+            )
+            trajectory = pv.lines_from_points(
+                coordinate_system.to_local(trajectory_world)
+            )
+            trajectory_actor = self.plotter.add_mesh(
+                trajectory,
+                color="gold",
+                line_width=3,
+                render_lines_as_tubes=True,
+                name=f"{side}_functional_trajectory",
+                reset_camera=False,
+            )
+            self.register_actor("condylar_guides", trajectory_actor)
+
         self.plotter.render()
 
     def finish_study_load(self) -> None:
