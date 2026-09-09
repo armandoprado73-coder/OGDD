@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
@@ -18,10 +19,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QTreeWidget,
     QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
+from ogdd.anatomy.dental_model import DentalModel
+from ogdd.anatomy.landmark import Landmark
 from ogdd.io.stl import STLReader
 
+from .orientation_panel import OrientationPanel
 from .scene_view import SceneView
 from .study_import_dialog import StudyFileSelection, StudyImportDialog
 
@@ -64,6 +70,9 @@ class MainWindow(QMainWindow):
 
         self._study_files: StudyFileSelection | None = None
         self._study_meshes: dict[str, Any] = {}
+        self._landmark_points: dict[str, np.ndarray] = {}
+        self._coordinate_system = None
+        self._visibility_before_pick: dict[str, bool] = {}
 
         self.scene = SceneView(self)
         self.setCentralWidget(self.scene)
@@ -116,6 +125,7 @@ class MainWindow(QMainWindow):
 
         self.workflow_list = QListWidget()
         self.workflow_list.setSpacing(2)
+        self.workflow_list.setMaximumHeight(245)
         for index, label in enumerate(self.CLINICAL_STEPS):
             item = QListWidgetItem(label)
             item.setToolTip("Paso disponible próximamente")
@@ -123,7 +133,37 @@ class MainWindow(QMainWindow):
             if index == 0:
                 self.workflow_list.setCurrentItem(item)
 
-        self.workflow_dock.setWidget(self.workflow_list)
+        self.orientation_panel = OrientationPanel()
+        self.orientation_panel.setVisible(False)
+        self.orientation_panel.pick_requested.connect(
+            self._start_landmark_pick
+        )
+        self.orientation_panel.confirm_requested.connect(
+            self._confirm_orientation
+        )
+        self.orientation_panel.reset_requested.connect(
+            self._reset_orientation
+        )
+
+        self.workflow_message = QLabel(
+            "Importe los modelos y el registro que forman el estudio."
+        )
+        self.workflow_message.setWordWrap(True)
+        self.workflow_message.setStyleSheet(
+            "color: #52666e; padding: 10px;"
+        )
+
+        workflow_widget = QWidget()
+        workflow_layout = QVBoxLayout(workflow_widget)
+        workflow_layout.setContentsMargins(0, 0, 0, 0)
+        workflow_layout.addWidget(self.workflow_list)
+        workflow_layout.addWidget(self.workflow_message)
+        workflow_layout.addWidget(self.orientation_panel, 1)
+
+        self.workflow_list.currentRowChanged.connect(
+            self._workflow_step_changed
+        )
+        self.workflow_dock.setWidget(workflow_widget)
         self.addDockWidget(
             Qt.DockWidgetArea.RightDockWidgetArea,
             self.workflow_dock,
@@ -370,6 +410,8 @@ class MainWindow(QMainWindow):
 
         self._study_files = None
         self._study_meshes.clear()
+        self._clear_anatomical_state()
+        self.orientation_panel.set_study_available(False)
         self.scene.show_welcome()
         self.scene.plotter.render()
         self.statusBar().showMessage(
@@ -461,6 +503,8 @@ class MainWindow(QMainWindow):
 
         self._study_files = selection
         self._study_meshes = meshes
+        self._clear_anatomical_state()
+        self.orientation_panel.set_study_available(True)
         self._update_study_tree(selection, meshes)
         self.scene.finish_study_load()
         self.workflow_list.setCurrentRow(0)
@@ -514,6 +558,274 @@ class MainWindow(QMainWindow):
 
         models_section.setExpanded(True)
         records_section.setExpanded(True)
+
+    def _workflow_step_changed(self, row: int) -> None:
+        """Show contextual controls for the selected clinical step."""
+
+        orientation_selected = row == 1
+        self.orientation_panel.setVisible(orientation_selected)
+        self.workflow_message.setVisible(not orientation_selected)
+
+        messages = {
+            0: "Importe los modelos y el registro que forman el estudio.",
+            2: "El montaje en RC se habilitará después de la orientación.",
+            3: "La calibración funcional se conectará al articulador.",
+            4: "El registro MIC se separará y registrará en este paso.",
+            5: "Aquí aparecerá el diagnóstico de desplazamiento RC–MIC.",
+            6: "Los resultados podrán revisarse y exportarse aquí.",
+        }
+        if not orientation_selected:
+            self.workflow_message.setText(
+                messages.get(row, "Paso clínico en preparación.")
+            )
+            self._finish_landmark_pick()
+
+    def _start_landmark_pick(self, landmark_name: str) -> None:
+        """Enter one-shot picking mode for a mandibular landmark."""
+
+        if "mandibular_rc" not in self._study_meshes:
+            QMessageBox.information(
+                self,
+                "Mandíbula no disponible",
+                "Cargue primero los modelos del estudio.",
+            )
+            return
+
+        self._finish_landmark_pick()
+        self._visibility_before_pick = {
+            layer: self.layer_actions[layer].isChecked()
+            for layer in (
+                "maxillary_rc",
+                "mandibular_rc",
+                "mic_record",
+            )
+        }
+        self._set_layer_visibility("maxillary_rc", False)
+        self._set_layer_visibility("mic_record", False)
+        self._set_layer_visibility("mandibular_rc", True)
+
+        for layer in (
+            "maxillary_rc",
+            "mandibular_rc",
+            "mic_record",
+            "landmarks",
+            "balkwill",
+            "axes",
+        ):
+            self.scene.set_layer_pickable(
+                layer,
+                layer == "mandibular_rc",
+            )
+
+        self.orientation_panel.set_active_landmark(landmark_name)
+        self.statusBar().showMessage(
+            "Selección activa — haga clic izquierdo sobre la mandíbula"
+        )
+        self.scene.enable_surface_pick(
+            lambda point, name=landmark_name: (
+                self._landmark_picked(name, point)
+            )
+        )
+
+    def _landmark_picked(
+        self,
+        landmark_name: str,
+        displayed_point,
+    ) -> None:
+        """Store a picked point in original scanner coordinates."""
+
+        point = np.asarray(displayed_point, dtype=float)
+        if point.shape != (3,):
+            return
+
+        if self._coordinate_system is None:
+            world_point = point
+        else:
+            world_point = self._coordinate_system.to_world(point)
+
+        self._landmark_points[landmark_name] = world_point
+        self.orientation_panel.set_landmark(
+            landmark_name,
+            world_point,
+        )
+        self._refresh_landmark_visuals()
+        self._finish_landmark_pick()
+        self.statusBar().showMessage(
+            "Punto guardado — puede seleccionarlo nuevamente para corregirlo"
+        )
+
+    def _finish_landmark_pick(self) -> None:
+        """Leave picking mode and restore previous layer visibility."""
+
+        self.scene.disable_surface_pick()
+        for layer in (
+            "maxillary_rc",
+            "mandibular_rc",
+            "mic_record",
+            "landmarks",
+            "balkwill",
+            "axes",
+        ):
+            self.scene.set_layer_pickable(layer, True)
+
+        for layer, visible in self._visibility_before_pick.items():
+            self._set_layer_visibility(layer, visible)
+        self._visibility_before_pick.clear()
+
+    def _set_layer_visibility(
+        self,
+        layer_name: str,
+        visible: bool,
+    ) -> None:
+        """Synchronize one layer actor and its menu action."""
+
+        self.scene.set_layer_visible(layer_name, visible)
+        action = self.layer_actions.get(layer_name)
+        if action is not None:
+            action.setChecked(visible)
+
+    def _refresh_landmark_visuals(self) -> None:
+        """Draw stored landmarks in the coordinate frame on screen."""
+
+        if self._coordinate_system is None:
+            displayed = self._landmark_points
+        else:
+            displayed = {
+                name: self._coordinate_system.to_local(point)
+                for name, point in self._landmark_points.items()
+            }
+        self.scene.show_landmarks(displayed)
+        landmarks_action = self.layer_actions["landmarks"]
+        landmarks_action.setEnabled(bool(displayed))
+        landmarks_action.setChecked(bool(displayed))
+
+    def _confirm_orientation(self) -> None:
+        """Build the anatomical system and orient every study mesh."""
+
+        required = {
+            "DENTAL_MIDLINE",
+            "RIGHT_SECOND_MOLAR",
+            "LEFT_SECOND_MOLAR",
+        }
+        if not required.issubset(self._landmark_points):
+            return
+
+        model = DentalModel(
+            mesh=self._study_meshes["mandibular_rc"]
+        )
+        references = {
+            "DENTAL_MIDLINE": "Dental midline",
+            "RIGHT_SECOND_MOLAR": "Right second molar cusp",
+            "LEFT_SECOND_MOLAR": "Left second molar cusp",
+        }
+        for name in required:
+            model.add_landmark(
+                Landmark(
+                    name=name,
+                    point=self._landmark_points[name].copy(),
+                    reference_used=references[name],
+                )
+            )
+
+        try:
+            coordinate_system = model.coordinate_system
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Orientación no válida",
+                "Los puntos seleccionados no permiten construir "
+                f"el sistema anatómico.\n\n{error}",
+            )
+            return
+
+        self._coordinate_system = coordinate_system
+        for layer_name, mesh in self._study_meshes.items():
+            self.scene.update_dental_mesh_points(
+                layer_name,
+                coordinate_system.to_local(mesh.vertices),
+            )
+
+        local_landmarks = {
+            name: coordinate_system.to_local(point)
+            for name, point in self._landmark_points.items()
+        }
+        self.scene.show_landmarks(local_landmarks)
+        self.scene.show_balkwill(local_landmarks)
+        self.scene.show_anatomical_axes()
+
+        for layer_name in ("landmarks", "balkwill", "axes"):
+            action = self.layer_actions[layer_name]
+            action.setEnabled(True)
+            action.setChecked(True)
+            self.scene.set_layer_visible(layer_name, True)
+
+        self._set_layer_visibility("maxillary_rc", True)
+        self._set_layer_visibility("mandibular_rc", True)
+        self._set_layer_visibility("mic_record", False)
+        self.orientation_panel.show_coordinate_system(coordinate_system)
+        self._update_anatomical_tree(coordinate_system)
+        self.scene.reset_camera()
+        self.statusBar().showMessage(
+            "Orientación anatómica confirmada — +X derecha, +Y anterior, +Z superior"
+        )
+
+    def _reset_orientation(self) -> None:
+        """Discard landmarks and return meshes to scanner coordinates."""
+
+        self._finish_landmark_pick()
+        for layer_name, mesh in self._study_meshes.items():
+            self.scene.update_dental_mesh_points(
+                layer_name,
+                mesh.vertices,
+            )
+        self._clear_anatomical_state()
+        self.scene.reset_camera()
+        self.statusBar().showMessage(
+            "Orientación restablecida — coordenadas originales del escáner"
+        )
+
+    def _clear_anatomical_state(self) -> None:
+        """Clear anatomical state, actors and study-tree entries."""
+
+        self._coordinate_system = None
+        self._landmark_points.clear()
+        for layer_name in ("landmarks", "balkwill", "axes"):
+            self.scene.clear_layer(layer_name, render=False)
+            action = self.layer_actions.get(layer_name)
+            if action is not None:
+                action.setChecked(False)
+                action.setEnabled(False)
+        if hasattr(self, "orientation_panel"):
+            self.orientation_panel.clear()
+        section = self.study_sections.get("landmarks")
+        if section is not None:
+            section.takeChildren()
+        self.scene.plotter.render()
+
+    def _update_anatomical_tree(self, coordinate_system) -> None:
+        """List confirmed landmarks and axes in the study tree."""
+
+        section = self.study_sections["landmarks"]
+        section.takeChildren()
+        labels = {
+            "DENTAL_MIDLINE": "Línea media dental",
+            "RIGHT_SECOND_MOLAR": "Segundo molar derecho",
+            "LEFT_SECOND_MOLAR": "Segundo molar izquierdo",
+        }
+        for name in (
+            "DENTAL_MIDLINE",
+            "RIGHT_SECOND_MOLAR",
+            "LEFT_SECOND_MOLAR",
+        ):
+            point = self._landmark_points[name]
+            child = QTreeWidgetItem(section, [labels[name]])
+            child.setToolTip(
+                0,
+                f"X {point[0]:.3f}  Y {point[1]:.3f}  "
+                f"Z {point[2]:.3f} mm",
+            )
+        QTreeWidgetItem(section, ["Sistema anatómico confirmado"])
+        section.setExpanded(True)
 
     def _show_about(self) -> None:
         QMessageBox.about(
