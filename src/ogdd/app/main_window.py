@@ -30,6 +30,7 @@ from ogdd.articulator.bonwill_builder import BonwillBuilder
 from ogdd.articulator.condylar_guide_builder import CondylarGuideBuilder
 from ogdd.io.stl import STLReader
 
+from .functional_calibration_panel import FunctionalCalibrationPanel
 from .mounting_panel import MountingPanel
 from .orientation_panel import OrientationPanel
 from .scene_view import SceneView
@@ -164,6 +165,9 @@ class MainWindow(QMainWindow):
             self._clear_mounting_state
         )
 
+        self.functional_calibration_panel = FunctionalCalibrationPanel()
+        self.functional_calibration_panel.setVisible(False)
+
         self.workflow_message = QLabel(
             "Importe los modelos y el registro que forman el estudio."
         )
@@ -179,6 +183,7 @@ class MainWindow(QMainWindow):
         workflow_layout.addWidget(self.workflow_message)
         workflow_layout.addWidget(self.orientation_panel, 1)
         workflow_layout.addWidget(self.mounting_panel, 1)
+        workflow_layout.addWidget(self.functional_calibration_panel, 1)
 
         self.workflow_list.currentRowChanged.connect(
             self._workflow_step_changed
@@ -584,10 +589,14 @@ class MainWindow(QMainWindow):
 
         orientation_selected = row == 1
         mounting_selected = row == 2
+        calibration_selected = row == 3
         self.orientation_panel.setVisible(orientation_selected)
         self.mounting_panel.setVisible(mounting_selected)
+        self.functional_calibration_panel.setVisible(calibration_selected)
         self.workflow_message.setVisible(
-            not orientation_selected and not mounting_selected
+            not orientation_selected
+            and not mounting_selected
+            and not calibration_selected
         )
 
         messages = {
@@ -598,7 +607,11 @@ class MainWindow(QMainWindow):
             5: "Aquí aparecerá el diagnóstico de desplazamiento RC–MIC.",
             6: "Los resultados podrán revisarse y exportarse aquí.",
         }
-        if not orientation_selected and not mounting_selected:
+        if (
+            not orientation_selected
+            and not mounting_selected
+            and not calibration_selected
+        ):
             self.workflow_message.setText(
                 messages.get(row, "Paso clínico en preparación.")
             )
@@ -928,6 +941,10 @@ class MainWindow(QMainWindow):
             configuration,
             guide_pair.right_guide.maximum_translation,
         )
+        self.functional_calibration_panel.set_mounting_available(
+            True,
+            guide_pair.right_guide.maximum_translation,
+        )
         self._update_articulator_tree()
         self.scene.reset_camera()
         self.statusBar().showMessage(
@@ -957,6 +974,8 @@ class MainWindow(QMainWindow):
             self.mounting_panel.set_orientation_available(
                 self._coordinate_system is not None
             )
+        if hasattr(self, "functional_calibration_panel"):
+            self.functional_calibration_panel.set_mounting_available(False)
         section = self.study_sections.get("articulator")
         if section is not None:
             section.takeChildren()

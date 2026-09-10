@@ -1,0 +1,65 @@
+"""Tests for the functional calibration workflow panel."""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+pytest.importorskip("PySide6")
+
+from PySide6.QtWidgets import QApplication
+
+from ogdd.app.functional_calibration_panel import FunctionalCalibrationPanel
+
+
+@pytest.fixture(scope="module")
+def qt_application():
+    """Provide the one QApplication required by all panel tests."""
+
+    return QApplication.instance() or QApplication([])
+
+
+def test_panel_starts_protected(qt_application) -> None:
+    panel = FunctionalCalibrationPanel()
+
+    assert not panel.availability_label.isHidden()
+    assert panel.reference_value.text() == "Pendiente"
+    assert panel.path_value.text() == "—"
+
+
+def test_panel_reports_confirmed_rc_mounting(qt_application) -> None:
+    panel = FunctionalCalibrationPanel()
+
+    panel.set_mounting_available(True, 17.0)
+
+    assert panel.availability_label.isHidden()
+    assert panel.reference_value.text() == "RC confirmada"
+    assert panel.path_value.text() == "17.0 mm"
+    assert "Montaje disponible" in panel.state_label.text()
+
+
+def test_panel_can_report_mounting_without_known_path(qt_application) -> None:
+    panel = FunctionalCalibrationPanel()
+
+    panel.set_mounting_available(True)
+
+    assert panel.reference_value.text() == "RC confirmada"
+    assert panel.path_value.text() == "—"
+
+
+def test_panel_returns_to_protected_state(qt_application) -> None:
+    panel = FunctionalCalibrationPanel()
+    panel.set_mounting_available(True, 17.0)
+
+    panel.set_mounting_available(False)
+
+    assert not panel.availability_label.isHidden()
+    assert panel.reference_value.text() == "Pendiente"
+    assert panel.opening_value.text() == "0.0°"
+    assert panel.protrusion_value.text() == "0.0 mm"
+    assert panel.lateral_value.text() == "0.0°"
+    assert panel.closure_value.text() == "0.0°"
+    assert panel.path_value.text() == "—"
