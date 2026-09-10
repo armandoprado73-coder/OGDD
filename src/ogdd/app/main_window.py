@@ -23,11 +23,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ogdd.anatomy.balkwill import BalkwillTriangle
 from ogdd.anatomy.dental_model import DentalModel
 from ogdd.anatomy.hinge_axis import HingeAxis
 from ogdd.anatomy.landmark import Landmark
+from ogdd.anatomy.mandibular_assembly import MandibularAssembly
 from ogdd.articulator.bonwill_builder import BonwillBuilder
+from ogdd.articulator.combined_controller import CombinedController
+from ogdd.articulator.combined_movement import CombinedMovement
 from ogdd.articulator.condylar_guide_builder import CondylarGuideBuilder
+from ogdd.articulator.functional_calibration_controller import (
+    FunctionalCalibrationController,
+)
+from ogdd.articulator.guided_lateral_excursion import (
+    GuidedLateralExcursion,
+)
+from ogdd.articulator.guided_protrusion import GuidedProtrusion
+from ogdd.articulator.lateral_excursion import LateralSide
+from ogdd.articulator.occlusal_closure import OcclusalClosure
+from ogdd.articulator.occlusal_closure_controller import (
+    OcclusalClosureController,
+)
 from ogdd.io.stl import STLReader
 
 from .functional_calibration_panel import FunctionalCalibrationPanel
@@ -84,6 +100,7 @@ class MainWindow(QMainWindow):
         self._bonwill = None
         self._hinge_axis = None
         self._condylar_guides = None
+        self._functional_calibration_controller = None
 
         self.scene = SceneView(self)
         self.setCentralWidget(self.scene)
@@ -167,6 +184,15 @@ class MainWindow(QMainWindow):
 
         self.functional_calibration_panel = FunctionalCalibrationPanel()
         self.functional_calibration_panel.setVisible(False)
+        self.functional_calibration_panel.open_requested.connect(
+            self._open_mandible
+        )
+        self.functional_calibration_panel.close_requested.connect(
+            self._close_mandible
+        )
+        self.functional_calibration_panel.rc_requested.connect(
+            self._return_to_rc
+        )
 
         self.workflow_message = QLabel(
             "Importe los modelos y el registro que forman el estudio."
@@ -908,10 +934,79 @@ class MainWindow(QMainWindow):
             configuration=configuration,
         )
 
+        right_posterior = Landmark(
+            name="RIGHT_SECOND_MOLAR",
+            point=self._landmark_points["RIGHT_SECOND_MOLAR"].copy(),
+            reference_used="Right second molar cusp",
+        )
+        left_posterior = Landmark(
+            name="LEFT_SECOND_MOLAR",
+            point=self._landmark_points["LEFT_SECOND_MOLAR"].copy(),
+            reference_used="Left second molar cusp",
+        )
+        balkwill = BalkwillTriangle(
+            right_posterior=right_posterior,
+            left_posterior=left_posterior,
+            dental_midline=dental_midline,
+        )
+        assembly = MandibularAssembly(
+            mesh=self._study_meshes["mandibular_rc"],
+            balkwill=balkwill,
+            bonwill=bonwill,
+            hinge_axis=hinge_axis,
+        )
+        right_excursion = GuidedLateralExcursion(
+            hinge_axis=hinge_axis,
+            superior_direction=self._coordinate_system.z_axis,
+            working_side=LateralSide.RIGHT,
+            balancing_guide=guide_pair.left_guide,
+        )
+        left_excursion = GuidedLateralExcursion(
+            hinge_axis=hinge_axis,
+            superior_direction=self._coordinate_system.z_axis,
+            working_side=LateralSide.LEFT,
+            balancing_guide=guide_pair.right_guide,
+        )
+        maximum_lateral_angle = min(
+            10.0,
+            right_excursion.maximum_angle_degrees,
+            left_excursion.maximum_angle_degrees,
+        )
+        protrusion = GuidedProtrusion(
+            hinge_axis=hinge_axis,
+            right_guide=guide_pair.right_guide,
+            left_guide=guide_pair.left_guide,
+        )
+        combined_movement = CombinedMovement(
+            assembly=assembly,
+            right_excursion=right_excursion,
+            left_excursion=left_excursion,
+            protrusion=protrusion,
+        )
+        combined_controller = CombinedController(
+            movement=combined_movement,
+            maximum_opening_angle_degrees=30.0,
+            maximum_lateral_angle_degrees=maximum_lateral_angle,
+            maximum_protrusion_distance_mm=protrusion.maximum_translation,
+            opening_step_degrees=1.0,
+            lateral_step_degrees=1.0,
+            protrusion_step_mm=1.0,
+        )
+        closure_controller = OcclusalClosureController(
+            closure=OcclusalClosure(),
+            base_position=combined_controller.position,
+            step_degrees=0.1,
+        )
+        functional_controller = FunctionalCalibrationController(
+            combined=combined_controller,
+            closure=closure_controller,
+        )
+
         self._articulator_configuration = configuration
         self._bonwill = bonwill
         self._hinge_axis = hinge_axis
         self._condylar_guides = guide_pair
+        self._functional_calibration_controller = functional_controller
 
         self.scene.show_virtual_bonwill(
             bonwill,
@@ -944,7 +1039,9 @@ class MainWindow(QMainWindow):
         self.functional_calibration_panel.set_mounting_available(
             True,
             guide_pair.right_guide.maximum_translation,
+            combined_controller.maximum_opening_angle_degrees,
         )
+        self._show_functional_position(functional_controller.position)
         self._update_articulator_tree()
         self.scene.reset_camera()
         self.statusBar().showMessage(
@@ -954,10 +1051,21 @@ class MainWindow(QMainWindow):
     def _clear_mounting_state(self) -> None:
         """Remove the virtual mounting while preserving orientation."""
 
+        if (
+            self._functional_calibration_controller is not None
+            and self._coordinate_system is not None
+        ):
+            self._functional_calibration_controller.reset_movement()
+            position = (
+                self._functional_calibration_controller.reset_adjustment()
+            )
+            self._show_functional_position(position)
+
         self._articulator_configuration = None
         self._bonwill = None
         self._hinge_axis = None
         self._condylar_guides = None
+        self._functional_calibration_controller = None
         for layer_name in (
             "bonwill",
             "virtual_condyles",
@@ -979,6 +1087,89 @@ class MainWindow(QMainWindow):
         section = self.study_sections.get("articulator")
         if section is not None:
             section.takeChildren()
+        self.scene.plotter.render()
+
+    def _open_mandible(self) -> None:
+        """Open the mounted mandible by one validated hinge step."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        position = controller.open_mandible()
+        self._show_functional_position(position)
+        self.statusBar().showMessage(
+            f"Apertura mandibular — {controller.opening_angle_degrees:.1f}°"
+        )
+
+    def _close_mandible(self) -> None:
+        """Close the mounted mandible by one validated hinge step."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        position = controller.close_mandible()
+        self._show_functional_position(position)
+        self.statusBar().showMessage(
+            f"Apertura mandibular — {controller.opening_angle_degrees:.1f}°"
+        )
+
+    def _return_to_rc(self) -> None:
+        """Return every calibrated movement component exactly to RC."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        controller.reset_movement()
+        position = controller.reset_adjustment()
+        self._show_functional_position(position)
+        self.statusBar().showMessage("Mandíbula en relación céntrica — 0.0°")
+
+    def _show_functional_position(self, position) -> None:
+        """Display one absolute mandibular position without moving the maxilla."""
+
+        if self._coordinate_system is None:
+            return
+
+        coordinate_system = self._coordinate_system
+        self.scene.update_dental_mesh_points(
+            "mandibular_rc",
+            coordinate_system.to_local(position.mesh.vertices),
+        )
+        moving_landmarks = {
+            "DENTAL_MIDLINE": coordinate_system.to_local(
+                position.balkwill.dental_midline.point
+            ),
+            "RIGHT_SECOND_MOLAR": coordinate_system.to_local(
+                position.balkwill.right_posterior.point
+            ),
+            "LEFT_SECOND_MOLAR": coordinate_system.to_local(
+                position.balkwill.left_posterior.point
+            ),
+        }
+        self.scene.show_landmarks(moving_landmarks, render=False)
+        self.scene.show_balkwill(moving_landmarks)
+        self.scene.show_virtual_bonwill(
+            position.bonwill,
+            coordinate_system,
+        )
+
+        for layer_name in (
+            "landmarks",
+            "balkwill",
+            "bonwill",
+            "virtual_condyles",
+        ):
+            self.scene.set_layer_visible(
+                layer_name,
+                self.layer_actions[layer_name].isChecked(),
+                render=False,
+            )
+
+        controller = self._functional_calibration_controller
+        if controller is not None:
+            self.functional_calibration_panel.show_opening(
+                controller.opening_angle_degrees
+            )
         self.scene.plotter.render()
 
     def _update_articulator_tree(self) -> None:

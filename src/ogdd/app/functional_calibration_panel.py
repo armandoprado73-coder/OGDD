@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFormLayout,
+    QHBoxLayout,
     QLabel,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -12,6 +15,10 @@ from PySide6.QtWidgets import (
 
 class FunctionalCalibrationPanel(QWidget):
     """Describe calibration readiness before movement controls are connected."""
+
+    open_requested = Signal()
+    close_requested = Signal()
+    rc_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -43,6 +50,8 @@ class FunctionalCalibrationPanel(QWidget):
         self.lateral_value = QLabel("0.0°")
         self.closure_value = QLabel("0.0°")
         self.path_value = QLabel("—")
+        self._mounting_available = False
+        self._maximum_opening_degrees = 30.0
 
         form = QFormLayout()
         form.setSpacing(9)
@@ -52,6 +61,32 @@ class FunctionalCalibrationPanel(QWidget):
         form.addRow("Lateralidad", self.lateral_value)
         form.addRow("Ajuste oclusal", self.closure_value)
         form.addRow("Recorrido disponible", self.path_value)
+
+        self.close_button = QPushButton("Cerrar 1°")
+        self.close_button.clicked.connect(
+            lambda checked=False: self.close_requested.emit()
+        )
+
+        self.open_button = QPushButton("Abrir 1°")
+        self.open_button.clicked.connect(
+            lambda checked=False: self.open_requested.emit()
+        )
+
+        opening_buttons = QHBoxLayout()
+        opening_buttons.setSpacing(8)
+        opening_buttons.addWidget(self.close_button)
+        opening_buttons.addWidget(self.open_button)
+
+        self.rc_button = QPushButton("Volver a relación céntrica (RC)")
+        self.rc_button.setStyleSheet(
+            "QPushButton { background: #6b4c8a; color: white; "
+            "font-weight: 600; padding: 8px; border-radius: 3px; }"
+            "QPushButton:disabled { background: #b7aabd; "
+            "color: #f1edf3; }"
+        )
+        self.rc_button.clicked.connect(
+            lambda checked=False: self.rc_requested.emit()
+        )
 
         self.state_label = QLabel(
             "Los controles permanecerán protegidos hasta confirmar "
@@ -67,16 +102,23 @@ class FunctionalCalibrationPanel(QWidget):
         layout.addWidget(instructions)
         layout.addWidget(self.availability_label)
         layout.addLayout(form)
+        layout.addLayout(opening_buttons)
+        layout.addWidget(self.rc_button)
         layout.addWidget(self.state_label)
         layout.addStretch()
+
+        self._update_movement_controls(0.0)
 
     def set_mounting_available(
         self,
         available: bool,
         maximum_translation: float | None = None,
+        maximum_opening_degrees: float = 30.0,
     ) -> None:
         """Reflect whether functional calibration has a valid RC reference."""
 
+        self._mounting_available = bool(available)
+        self._maximum_opening_degrees = float(maximum_opening_degrees)
         self.availability_label.setVisible(not available)
         if available:
             self.reference_value.setText("RC confirmada")
@@ -86,10 +128,11 @@ class FunctionalCalibrationPanel(QWidget):
                 else f"{maximum_translation:.1f} mm"
             )
             self.state_label.setText(
-                "Montaje disponible. El panel está preparado para "
-                "incorporar los controles de movimiento."
+                "Apertura sobre el eje de bisagra disponible. "
+                "Los demás movimientos permanecen protegidos."
             )
             self._set_state_style(ready=True)
+            self._update_movement_controls(0.0)
             return
 
         self.clear()
@@ -109,6 +152,24 @@ class FunctionalCalibrationPanel(QWidget):
             "el montaje."
         )
         self._set_state_style(ready=False)
+        self._update_movement_controls(0.0)
+
+    def show_opening(self, angle_degrees: float) -> None:
+        """Display the current hinge opening and synchronize its controls."""
+
+        angle_degrees = float(angle_degrees)
+        self.opening_value.setText(f"{angle_degrees:.1f}°")
+        self._update_movement_controls(angle_degrees)
+
+    def _update_movement_controls(self, angle_degrees: float) -> None:
+        can_close = self._mounting_available and angle_degrees > 0.0
+        can_open = (
+            self._mounting_available
+            and angle_degrees < self._maximum_opening_degrees
+        )
+        self.close_button.setEnabled(can_close)
+        self.open_button.setEnabled(can_open)
+        self.rc_button.setEnabled(can_close)
 
     def _set_state_style(self, *, ready: bool) -> None:
         if ready:

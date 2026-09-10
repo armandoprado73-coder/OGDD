@@ -159,6 +159,8 @@ class SceneView(QFrame):
     def show_landmarks(
         self,
         points: dict[str, np.ndarray],
+        *,
+        render: bool = True,
     ) -> None:
         """Rebuild named anatomical landmark markers."""
 
@@ -200,7 +202,8 @@ class SceneView(QFrame):
             self.register_actor("landmarks", marker_actor)
             self.register_actor("landmarks", label_actor)
 
-        self.plotter.render()
+        if render:
+            self.plotter.render()
 
     def show_balkwill(self, points: dict[str, np.ndarray]) -> None:
         """Draw the closed Balkwill triangle from local landmarks."""
@@ -436,12 +439,15 @@ class SceneView(QFrame):
         self,
         layer_name: str,
         visible: bool,
+        *,
+        render: bool = True,
     ) -> None:
         """Show or hide every actor registered in a layer."""
 
         for actor in self._layer_actors.get(layer_name, []):
             actor.SetVisibility(visible)
-        self.plotter.render()
+        if render:
+            self.plotter.render()
 
     def set_anatomical_view(self, view_name: str) -> None:
         """Move the camera to a predefined anatomical view."""
