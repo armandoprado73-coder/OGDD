@@ -29,6 +29,8 @@ def test_panel_starts_protected(qt_application) -> None:
     assert not panel.availability_label.isHidden()
     assert panel.reference_value.text() == "Pendiente"
     assert panel.path_value.text() == "—"
+    assert not panel.advance_button.isEnabled()
+    assert not panel.retreat_button.isEnabled()
 
 
 def test_panel_reports_confirmed_rc_mounting(qt_application) -> None:
@@ -40,8 +42,11 @@ def test_panel_reports_confirmed_rc_mounting(qt_application) -> None:
     assert panel.reference_value.text() == "RC confirmada"
     assert panel.path_value.text() == "17.0 mm"
     assert "Apertura" in panel.state_label.text()
+    assert "protrusión" in panel.state_label.text()
     assert panel.open_button.isEnabled()
     assert not panel.close_button.isEnabled()
+    assert panel.advance_button.isEnabled()
+    assert not panel.retreat_button.isEnabled()
     assert not panel.rc_button.isEnabled()
 
 
@@ -52,6 +57,7 @@ def test_panel_can_report_mounting_without_known_path(qt_application) -> None:
 
     assert panel.reference_value.text() == "RC confirmada"
     assert panel.path_value.text() == "—"
+    assert "recorrido conocido" in panel.state_label.text()
 
 
 def test_panel_returns_to_protected_state(qt_application) -> None:
@@ -69,6 +75,8 @@ def test_panel_returns_to_protected_state(qt_application) -> None:
     assert panel.path_value.text() == "—"
     assert not panel.open_button.isEnabled()
     assert not panel.close_button.isEnabled()
+    assert not panel.advance_button.isEnabled()
+    assert not panel.retreat_button.isEnabled()
     assert not panel.rc_button.isEnabled()
 
 
@@ -104,3 +112,43 @@ def test_opening_buttons_emit_requests(qt_application) -> None:
     assert open_spy.count() == 1
     assert close_spy.count() == 1
     assert rc_spy.count() == 1
+
+
+def test_protrusion_controls_follow_current_distance(qt_application) -> None:
+    panel = FunctionalCalibrationPanel()
+    panel.set_mounting_available(True, 17.0, 30.0)
+
+    panel.show_protrusion(1.0)
+
+    assert panel.protrusion_value.text() == "1.0 mm"
+    assert panel.advance_button.isEnabled()
+    assert panel.retreat_button.isEnabled()
+    assert panel.rc_button.isEnabled()
+
+    panel.show_protrusion(17.0)
+
+    assert not panel.advance_button.isEnabled()
+    assert panel.retreat_button.isEnabled()
+
+
+def test_protrusion_requires_known_path(qt_application) -> None:
+    panel = FunctionalCalibrationPanel()
+
+    panel.set_mounting_available(True)
+
+    assert not panel.advance_button.isEnabled()
+    assert not panel.retreat_button.isEnabled()
+
+
+def test_protrusion_buttons_emit_requests(qt_application) -> None:
+    panel = FunctionalCalibrationPanel()
+    panel.set_mounting_available(True, 17.0, 30.0)
+    panel.show_protrusion(1.0)
+    advance_spy = QSignalSpy(panel.advance_requested)
+    retreat_spy = QSignalSpy(panel.retreat_requested)
+
+    panel.advance_button.click()
+    panel.retreat_button.click()
+
+    assert advance_spy.count() == 1
+    assert retreat_spy.count() == 1

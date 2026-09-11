@@ -190,6 +190,12 @@ class MainWindow(QMainWindow):
         self.functional_calibration_panel.close_requested.connect(
             self._close_mandible
         )
+        self.functional_calibration_panel.advance_requested.connect(
+            self._advance_mandible
+        )
+        self.functional_calibration_panel.retreat_requested.connect(
+            self._retreat_mandible
+        )
         self.functional_calibration_panel.rc_requested.connect(
             self._return_to_rc
         )
@@ -1038,7 +1044,7 @@ class MainWindow(QMainWindow):
         )
         self.functional_calibration_panel.set_mounting_available(
             True,
-            guide_pair.right_guide.maximum_translation,
+            functional_controller.maximum_protrusion_distance_mm,
             combined_controller.maximum_opening_angle_degrees,
         )
         self._show_functional_position(functional_controller.position)
@@ -1113,6 +1119,32 @@ class MainWindow(QMainWindow):
             f"Apertura mandibular — {controller.opening_angle_degrees:.1f}°"
         )
 
+    def _advance_mandible(self) -> None:
+        """Advance the mounted mandible by one guided step."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        position = controller.advance()
+        self._show_functional_position(position)
+        self.statusBar().showMessage(
+            "Protrusión mandibular — "
+            f"{controller.protrusion_distance_mm:.1f} mm"
+        )
+
+    def _retreat_mandible(self) -> None:
+        """Retreat the mounted mandible one guided step toward RC."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        position = controller.retreat()
+        self._show_functional_position(position)
+        self.statusBar().showMessage(
+            "Protrusión mandibular — "
+            f"{controller.protrusion_distance_mm:.1f} mm"
+        )
+
     def _return_to_rc(self) -> None:
         """Return every calibrated movement component exactly to RC."""
 
@@ -1169,6 +1201,9 @@ class MainWindow(QMainWindow):
         if controller is not None:
             self.functional_calibration_panel.show_opening(
                 controller.opening_angle_degrees
+            )
+            self.functional_calibration_panel.show_protrusion(
+                controller.protrusion_distance_mm
             )
         self.scene.plotter.render()
 
