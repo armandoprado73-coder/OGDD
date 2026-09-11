@@ -30,6 +30,7 @@ def test_panel_starts_protected(qt_application) -> None:
     assert not panel.availability_label.isHidden()
     assert panel.reference_value.text() == "Pendiente"
     assert panel.path_value.text() == "—"
+    assert panel.active_path_value.text() == "RC"
     assert not panel.advance_button.isEnabled()
     assert not panel.retreat_button.isEnabled()
     assert not panel.left_button.isEnabled()
@@ -287,7 +288,7 @@ def test_position_synchronizes_sliders_without_emitting(qt_application) -> None:
 
     panel.show_position(
         opening_angle_degrees=1.4,
-        protrusion_distance_mm=6.8,
+        protrusion_distance_mm=0.0,
         lateral_angle_degrees=-2.3,
         adjustment_angle_degrees=-0.6,
         maximum_translation_mm=17.0,
@@ -296,7 +297,7 @@ def test_position_synchronizes_sliders_without_emitting(qt_application) -> None:
     )
 
     assert panel.opening_slider.value() == 14
-    assert panel.protrusion_slider.value() == 68
+    assert panel.protrusion_slider.value() == 0
     assert panel.lateral_slider.value() == -23
     assert panel.closure_value.text() == "-0.6° (cierre)"
     assert opening_spy.count() == 0
@@ -351,6 +352,7 @@ def test_save_buttons_require_matching_clinical_positions(
     assert not panel.save_right_canine_button.isEnabled()
     assert not panel.save_left_canine_button.isEnabled()
 
+    panel.show_protrusion(0.0)
     panel.show_lateral(2.3)
     assert not panel.save_protrusive_button.isEnabled()
     assert panel.save_right_canine_button.isEnabled()
@@ -360,6 +362,39 @@ def test_save_buttons_require_matching_clinical_positions(
     assert not panel.save_protrusive_button.isEnabled()
     assert not panel.save_right_canine_button.isEnabled()
     assert panel.save_left_canine_button.isEnabled()
+
+
+def test_active_path_locks_incompatible_movement_controls(
+    qt_application,
+) -> None:
+    panel = FunctionalCalibrationPanel()
+    panel.set_mounting_available(True, 17.0, 30.0, 4.0, 4.0)
+
+    panel.show_protrusion(7.3)
+    assert panel.active_path_value.text() == "Protrusiva desde RC"
+    assert panel.protrusion_slider.isEnabled()
+    assert not panel.lateral_slider.isEnabled()
+    assert not panel.left_button.isEnabled()
+    assert not panel.right_button.isEnabled()
+
+    panel.show_protrusion(0.0)
+    panel.show_lateral(2.3)
+    assert panel.active_path_value.text() == "Canina derecha desde RC"
+    assert not panel.protrusion_slider.isEnabled()
+    assert panel.lateral_slider.isEnabled()
+    assert panel.lateral_slider.minimum() == 0
+    assert panel.lateral_slider.maximum() == 40
+
+
+def test_hinge_movement_requires_rc_before_excursion(qt_application) -> None:
+    panel = FunctionalCalibrationPanel()
+    panel.set_mounting_available(True, 17.0, 30.0, 4.0, 4.0)
+
+    panel.show_opening(1.2)
+
+    assert "vuelva a RC" in panel.active_path_value.text()
+    assert not panel.protrusion_slider.isEnabled()
+    assert not panel.lateral_slider.isEnabled()
 
 
 def test_saved_limits_show_complete_numeric_calibration(

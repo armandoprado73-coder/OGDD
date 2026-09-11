@@ -71,6 +71,7 @@ class FunctionalCalibrationPanel(QWidget):
         self.lateral_value = QLabel("0.0°")
         self.closure_value = QLabel("0.0°")
         self.path_value = QLabel("—")
+        self.active_path_value = QLabel("RC")
         self._mounting_available = False
         self._maximum_opening_degrees = 30.0
         self._maximum_translation_mm: float | None = None
@@ -92,6 +93,7 @@ class FunctionalCalibrationPanel(QWidget):
         form.addRow("Lateralidad", self.lateral_value)
         form.addRow("Ajuste oclusal", self.closure_value)
         form.addRow("Recorrido disponible", self.path_value)
+        form.addRow("Ruta activa", self.active_path_value)
 
         movement_title = QLabel("Movimiento mandibular base")
         movement_title.setStyleSheet(
@@ -358,17 +360,55 @@ class FunctionalCalibrationPanel(QWidget):
             self._to_slider(self._maximum_opening_degrees),
         )
         maximum_translation = self._maximum_translation_mm or 0.0
+        route = self._active_route()
+        if route not in ("rc", "protrusive"):
+            maximum_translation = 0.0
         self.protrusion_slider.setRange(
             0,
             self._to_slider(maximum_translation),
         )
         maximum_left = self._maximum_left_lateral_degrees or 0.0
         maximum_right = self._maximum_right_lateral_degrees or 0.0
+        if route == "protrusive" or route == "hinge":
+            maximum_left = 0.0
+            maximum_right = 0.0
+        elif route == "right_canine":
+            maximum_left = 0.0
+        elif route == "left_canine":
+            maximum_right = 0.0
         self.lateral_slider.setRange(
             -self._to_slider(maximum_left),
             self._to_slider(maximum_right),
         )
         del blockers
+
+    def _active_route(self) -> str:
+        """Return the protected functional path represented by the panel."""
+
+        if self._protrusion_distance_mm > 0.0:
+            return "protrusive"
+        if self._lateral_angle_degrees > 0.0:
+            return "right_canine"
+        if self._lateral_angle_degrees < 0.0:
+            return "left_canine"
+        if (
+            self._opening_angle_degrees != 0.0
+            or self._adjustment_angle_degrees != 0.0
+        ):
+            return "hinge"
+        return "rc"
+
+    def _show_active_route(self) -> None:
+        """Explain which RC-based route currently owns the controls."""
+
+        labels = {
+            "rc": "RC — rutas disponibles",
+            "hinge": "Bisagra — vuelva a RC para iniciar una excursión",
+            "protrusive": "Protrusiva desde RC",
+            "right_canine": "Canina derecha desde RC",
+            "left_canine": "Canina izquierda desde RC",
+        }
+        self.active_path_value.setText(labels[self._active_route()])
 
     def set_mounting_available(
         self,
@@ -397,7 +437,12 @@ class FunctionalCalibrationPanel(QWidget):
             if maximum_left_lateral_degrees is None
             else float(maximum_left_lateral_degrees)
         )
+        self._opening_angle_degrees = 0.0
+        self._protrusion_distance_mm = 0.0
+        self._lateral_angle_degrees = 0.0
+        self._adjustment_angle_degrees = 0.0
         self._configure_slider_ranges()
+        self._show_active_route()
         self.availability_label.setVisible(not available)
         if available:
             self.reference_value.setText("RC confirmada")
@@ -432,10 +477,6 @@ class FunctionalCalibrationPanel(QWidget):
                     "permanecen protegidos."
                 )
             self._set_state_style(ready=True)
-            self._opening_angle_degrees = 0.0
-            self._protrusion_distance_mm = 0.0
-            self._lateral_angle_degrees = 0.0
-            self._adjustment_angle_degrees = 0.0
             self._protrusive_saved = False
             self._right_canine_saved = False
             self._left_canine_saved = False
@@ -458,6 +499,7 @@ class FunctionalCalibrationPanel(QWidget):
         self.lateral_value.setText("0.0°")
         self.closure_value.setText("0.0°")
         self.path_value.setText("—")
+        self.active_path_value.setText("RC")
         self._maximum_translation_mm = None
         self._maximum_right_lateral_degrees = None
         self._maximum_left_lateral_degrees = None
@@ -470,6 +512,7 @@ class FunctionalCalibrationPanel(QWidget):
         self._left_canine_saved = False
         self._clear_limit_labels()
         self._configure_slider_ranges()
+        self._show_active_route()
         self._set_slider_value(self.opening_slider, 0.0)
         self._set_slider_value(self.protrusion_slider, 0.0)
         self._set_slider_value(self.lateral_slider, 0.0)
@@ -486,7 +529,9 @@ class FunctionalCalibrationPanel(QWidget):
         angle_degrees = float(angle_degrees)
         self._opening_angle_degrees = angle_degrees
         self.opening_value.setText(f"{angle_degrees:.1f}°")
+        self._configure_slider_ranges()
         self._set_slider_value(self.opening_slider, angle_degrees)
+        self._show_active_route()
         self._update_movement_controls()
 
     def show_protrusion(self, distance_mm: float) -> None:
@@ -495,7 +540,9 @@ class FunctionalCalibrationPanel(QWidget):
         distance_mm = float(distance_mm)
         self._protrusion_distance_mm = distance_mm
         self.protrusion_value.setText(f"{distance_mm:.1f} mm")
+        self._configure_slider_ranges()
         self._set_slider_value(self.protrusion_slider, distance_mm)
+        self._show_active_route()
         self._update_movement_controls()
 
     def show_lateral(self, angle_degrees: float) -> None:
@@ -510,7 +557,9 @@ class FunctionalCalibrationPanel(QWidget):
         else:
             text = "0.0°"
         self.lateral_value.setText(text)
+        self._configure_slider_ranges()
         self._set_slider_value(self.lateral_slider, angle_degrees)
+        self._show_active_route()
         self._update_movement_controls()
 
     def show_adjustment(self, angle_degrees: float) -> None:
@@ -525,6 +574,8 @@ class FunctionalCalibrationPanel(QWidget):
         else:
             text = "0.0°"
         self.closure_value.setText(text)
+        self._configure_slider_ranges()
+        self._show_active_route()
         self._update_movement_controls()
 
     @staticmethod
@@ -590,7 +641,6 @@ class FunctionalCalibrationPanel(QWidget):
         self._maximum_left_lateral_degrees = float(
             maximum_left_lateral_degrees
         )
-        self._configure_slider_ranges()
         self.path_value.setText(f"{maximum_translation_mm:.1f} mm")
         self.show_opening(opening_angle_degrees)
         self.show_protrusion(protrusion_distance_mm)
@@ -658,22 +708,31 @@ class FunctionalCalibrationPanel(QWidget):
             or self._right_canine_saved
             or self._left_canine_saved
         )
+        route = self._active_route()
+        can_use_protrusion = route in ("rc", "protrusive")
+        can_use_lateral = route in (
+            "rc",
+            "right_canine",
+            "left_canine",
+        )
         self.opening_slider.setEnabled(self._mounting_available)
         self.protrusion_slider.setEnabled(
             self._mounting_available
             and self._maximum_translation_mm is not None
+            and can_use_protrusion
         )
         self.lateral_slider.setEnabled(
             self._mounting_available
             and self._maximum_right_lateral_degrees is not None
             and self._maximum_left_lateral_degrees is not None
+            and can_use_lateral
         )
         self.close_button.setEnabled(can_close)
         self.open_button.setEnabled(can_open)
         self.retreat_button.setEnabled(can_retreat)
-        self.advance_button.setEnabled(can_advance)
-        self.left_button.setEnabled(can_move_left)
-        self.right_button.setEnabled(can_move_right)
+        self.advance_button.setEnabled(can_advance and can_use_protrusion)
+        self.left_button.setEnabled(can_move_left and can_use_lateral)
+        self.right_button.setEnabled(can_move_right and can_use_lateral)
         self.lateral_zero_button.setEnabled(can_center_lateral)
         self.fine_close_button.setEnabled(self._mounting_available)
         self.fine_open_button.setEnabled(self._mounting_available)

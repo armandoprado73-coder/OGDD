@@ -97,6 +97,32 @@ class FunctionalCalibrationController:
 
         return self.closure.position
 
+    @staticmethod
+    def _is_zero(value: float) -> bool:
+        """Treat normalized controller zero as one clinical reference."""
+
+        return math.isclose(float(value), 0.0, abs_tol=1e-12)
+
+    @property
+    def is_at_centric_relation(self) -> bool:
+        """Whether every movement and fine adjustment is exactly at RC."""
+
+        return (
+            self._is_zero(self.opening_angle_degrees)
+            and self._is_zero(self.lateral_angle_degrees)
+            and self._is_zero(self.protrusion_distance_mm)
+            and self._is_zero(self.adjustment_angle_degrees)
+        )
+
+    def _require_centric_relation(self, movement_name: str) -> None:
+        """Protect the start of a new functional path with the RC reference."""
+
+        if not self.is_at_centric_relation:
+            raise ValueError(
+                "Return to centric relation before starting "
+                f"{movement_name}."
+            )
+
     def _state(self) -> tuple[float, float, float]:
         """
         Return the current combined numeric state.
@@ -277,6 +303,18 @@ class FunctionalCalibrationController:
         Set lateral excursion within a saved endpoint.
         """
 
+        angle_degrees = float(angle_degrees)
+        current_angle = self.lateral_angle_degrees
+        starts_new_path = (
+            not self._is_zero(angle_degrees)
+            and (
+                self._is_zero(current_angle)
+                or current_angle * angle_degrees < 0.0
+            )
+        )
+        if starts_new_path:
+            self._require_centric_relation("a lateral path")
+
         return self.set_position(
             opening_angle_degrees=(
                 self.opening_angle_degrees
@@ -294,6 +332,14 @@ class FunctionalCalibrationController:
         """
         Set protrusion within a saved endpoint.
         """
+
+        distance_mm = float(distance_mm)
+        starts_new_path = (
+            distance_mm > 0.0
+            and self._is_zero(self.protrusion_distance_mm)
+        )
+        if starts_new_path:
+            self._require_centric_relation("the protrusive path")
 
         return self.set_position(
             opening_angle_degrees=(
@@ -441,6 +487,11 @@ class FunctionalCalibrationController:
         Save the current confirmed right canine endpoint.
         """
 
+        if not self._is_zero(self.protrusion_distance_mm):
+            raise ValueError(
+                "A canine limit requires zero symmetric protrusion."
+            )
+
         return self.limits.save_right_canine(
             self.position
         )
@@ -449,6 +500,11 @@ class FunctionalCalibrationController:
         """
         Save the current confirmed left canine endpoint.
         """
+
+        if not self._is_zero(self.protrusion_distance_mm):
+            raise ValueError(
+                "A canine limit requires zero symmetric protrusion."
+            )
 
         return self.limits.save_left_canine(
             self.position
@@ -468,6 +524,9 @@ class FunctionalCalibrationController:
             raise ValueError(
                 "The requested functional limit is not saved."
             )
+
+        self.reset_movement()
+        self.reset_adjustment()
 
         self._apply_combined_change(
             lambda: self.combined.set_position(

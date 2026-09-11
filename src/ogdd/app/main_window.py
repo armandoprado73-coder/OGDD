@@ -1441,7 +1441,9 @@ class MainWindow(QMainWindow):
         if controller is None:
             return
         controller.clear_limits()
-        self._show_functional_position(controller.position)
+        controller.reset_movement()
+        position = controller.reset_adjustment()
+        self._show_functional_position(position)
         self.statusBar().showMessage(
             "Límites funcionales borrados — recalibración disponible"
         )

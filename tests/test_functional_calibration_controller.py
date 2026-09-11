@@ -230,6 +230,15 @@ def test_position_and_components_delegate_to_controllers(
     assert controller.protrusion_distance_mm == pytest.approx(0.0)
     assert controller.adjustment_angle_degrees == pytest.approx(0.0)
     assert controller.position is closure.position
+    assert controller.is_at_centric_relation
+
+
+def test_nonzero_component_is_not_centric_relation(
+    controller: FunctionalCalibrationController,
+) -> None:
+    controller.set_position(0.0, 0.0, 1.0)
+
+    assert not controller.is_at_centric_relation
 
 
 def test_changed_combined_position_resets_adjustment(
@@ -413,6 +422,7 @@ def test_direct_setters_are_clamped_by_saved_limits(
     controller.set_lateral(7.0)
     assert controller.lateral_angle_degrees == pytest.approx(3.2)
 
+    controller.reset_movement()
     controller.set_lateral(-7.0)
     assert controller.lateral_angle_degrees == pytest.approx(-3.6)
 
@@ -426,6 +436,62 @@ def test_protrusion_direct_setter_is_clamped(
     controller.set_protrusion(12.0)
 
     assert controller.protrusion_distance_mm == pytest.approx(6.4)
+
+
+def test_protrusion_path_must_start_from_rc(
+    controller: FunctionalCalibrationController,
+) -> None:
+    controller.set_lateral(2.0)
+
+    with pytest.raises(ValueError, match="centric relation"):
+        controller.set_protrusion(1.0)
+
+    assert controller.lateral_angle_degrees == pytest.approx(2.0)
+    assert controller.protrusion_distance_mm == pytest.approx(0.0)
+
+
+def test_lateral_path_must_start_from_rc(
+    controller: FunctionalCalibrationController,
+) -> None:
+    controller.set_protrusion(2.0)
+
+    with pytest.raises(ValueError, match="centric relation"):
+        controller.set_lateral(1.0)
+
+    assert controller.protrusion_distance_mm == pytest.approx(2.0)
+    assert controller.lateral_angle_degrees == pytest.approx(0.0)
+
+
+def test_opposite_canine_path_requires_return_to_rc(
+    controller: FunctionalCalibrationController,
+) -> None:
+    controller.set_lateral(2.0)
+
+    with pytest.raises(ValueError, match="centric relation"):
+        controller.set_lateral(-1.0)
+
+    assert controller.lateral_angle_degrees == pytest.approx(2.0)
+
+
+def test_opening_alone_must_return_to_rc_before_excursion(
+    controller: FunctionalCalibrationController,
+) -> None:
+    controller.set_opening(1.0)
+
+    with pytest.raises(ValueError, match="centric relation"):
+        controller.set_lateral(1.0)
+
+    assert controller.opening_angle_degrees == pytest.approx(1.0)
+    assert controller.lateral_angle_degrees == pytest.approx(0.0)
+
+
+def test_canine_limit_rejects_symmetric_protrusion(
+    controller: FunctionalCalibrationController,
+) -> None:
+    controller.set_position(1.0, 2.0, 0.8)
+
+    with pytest.raises(ValueError, match="zero symmetric protrusion"):
+        controller.save_right_canine_limit()
 
 
 def test_direct_combined_set_uses_candidate_mechanical_state(
@@ -524,9 +590,11 @@ def test_go_to_unsaved_limit_is_rejected_without_change(
 def test_go_to_limit_reproduces_snapshot_without_cross_clamping(
     controller: FunctionalCalibrationController,
 ) -> None:
-    controller.set_position(1.0, 3.2, 0.8)
-    controller.set_adjustment(-0.2)
-    controller.save_right_canine_limit()
+    combined_snapshot = make_occlusal_position(
+        make_combined_position(1.0, 3.2, 0.8),
+        -0.2,
+    )
+    controller.limits.save_right_canine(combined_snapshot)
 
     controller.reset_movement()
     save_protrusive_at(controller, 0.5, -0.1)
