@@ -12,11 +12,13 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QDockWidget,
+    QFrame,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QScrollArea,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -35,6 +37,7 @@ from ogdd.articulator.condylar_guide_builder import CondylarGuideBuilder
 from ogdd.articulator.functional_calibration_controller import (
     FunctionalCalibrationController,
 )
+from ogdd.articulator.functional_limits import FunctionalLimitKind
 from ogdd.articulator.guided_lateral_excursion import (
     GuidedLateralExcursion,
 )
@@ -184,6 +187,15 @@ class MainWindow(QMainWindow):
 
         self.functional_calibration_panel = FunctionalCalibrationPanel()
         self.functional_calibration_panel.setVisible(False)
+        self.functional_calibration_scroll = QScrollArea()
+        self.functional_calibration_scroll.setWidgetResizable(True)
+        self.functional_calibration_scroll.setFrameShape(
+            QFrame.Shape.NoFrame
+        )
+        self.functional_calibration_scroll.setWidget(
+            self.functional_calibration_panel
+        )
+        self.functional_calibration_scroll.setVisible(False)
         self.functional_calibration_panel.open_requested.connect(
             self._open_mandible
         )
@@ -195,6 +207,54 @@ class MainWindow(QMainWindow):
         )
         self.functional_calibration_panel.retreat_requested.connect(
             self._retreat_mandible
+        )
+        self.functional_calibration_panel.move_left_requested.connect(
+            self._move_mandible_left
+        )
+        self.functional_calibration_panel.move_right_requested.connect(
+            self._move_mandible_right
+        )
+        self.functional_calibration_panel.lateral_zero_requested.connect(
+            self._zero_lateral
+        )
+        self.functional_calibration_panel.opening_changed.connect(
+            self._set_mandibular_opening
+        )
+        self.functional_calibration_panel.protrusion_changed.connect(
+            self._set_mandibular_protrusion
+        )
+        self.functional_calibration_panel.lateral_changed.connect(
+            self._set_mandibular_lateral
+        )
+        self.functional_calibration_panel.adjust_close_requested.connect(
+            self._adjust_occlusion_close
+        )
+        self.functional_calibration_panel.adjust_open_requested.connect(
+            self._adjust_occlusion_open
+        )
+        self.functional_calibration_panel.adjustment_zero_requested.connect(
+            self._reset_occlusal_adjustment
+        )
+        self.functional_calibration_panel.save_protrusive_requested.connect(
+            self._save_protrusive_limit
+        )
+        self.functional_calibration_panel.save_right_canine_requested.connect(
+            self._save_right_canine_limit
+        )
+        self.functional_calibration_panel.save_left_canine_requested.connect(
+            self._save_left_canine_limit
+        )
+        self.functional_calibration_panel.go_protrusive_requested.connect(
+            self._go_to_protrusive_limit
+        )
+        self.functional_calibration_panel.go_right_canine_requested.connect(
+            self._go_to_right_canine_limit
+        )
+        self.functional_calibration_panel.go_left_canine_requested.connect(
+            self._go_to_left_canine_limit
+        )
+        self.functional_calibration_panel.clear_limits_requested.connect(
+            self._clear_functional_limits
         )
         self.functional_calibration_panel.rc_requested.connect(
             self._return_to_rc
@@ -215,7 +275,7 @@ class MainWindow(QMainWindow):
         workflow_layout.addWidget(self.workflow_message)
         workflow_layout.addWidget(self.orientation_panel, 1)
         workflow_layout.addWidget(self.mounting_panel, 1)
-        workflow_layout.addWidget(self.functional_calibration_panel, 1)
+        workflow_layout.addWidget(self.functional_calibration_scroll, 1)
 
         self.workflow_list.currentRowChanged.connect(
             self._workflow_step_changed
@@ -625,6 +685,7 @@ class MainWindow(QMainWindow):
         self.orientation_panel.setVisible(orientation_selected)
         self.mounting_panel.setVisible(mounting_selected)
         self.functional_calibration_panel.setVisible(calibration_selected)
+        self.functional_calibration_scroll.setVisible(calibration_selected)
         self.workflow_message.setVisible(
             not orientation_selected
             and not mounting_selected
@@ -994,9 +1055,9 @@ class MainWindow(QMainWindow):
             maximum_opening_angle_degrees=30.0,
             maximum_lateral_angle_degrees=maximum_lateral_angle,
             maximum_protrusion_distance_mm=protrusion.maximum_translation,
-            opening_step_degrees=1.0,
-            lateral_step_degrees=1.0,
-            protrusion_step_mm=1.0,
+            opening_step_degrees=0.1,
+            lateral_step_degrees=0.1,
+            protrusion_step_mm=0.1,
         )
         closure_controller = OcclusalClosureController(
             closure=OcclusalClosure(),
@@ -1044,8 +1105,20 @@ class MainWindow(QMainWindow):
         )
         self.functional_calibration_panel.set_mounting_available(
             True,
-            functional_controller.maximum_protrusion_distance_mm,
-            combined_controller.maximum_opening_angle_degrees,
+            maximum_translation=(
+                functional_controller.maximum_protrusion_distance_mm
+            ),
+            maximum_opening_degrees=(
+                combined_controller.maximum_opening_angle_degrees
+            ),
+            maximum_right_lateral_degrees=(
+                functional_controller
+                .maximum_right_lateral_angle_degrees
+            ),
+            maximum_left_lateral_degrees=(
+                functional_controller
+                .maximum_left_lateral_angle_degrees
+            ),
         )
         self._show_functional_position(functional_controller.position)
         self._update_articulator_tree()
@@ -1101,10 +1174,26 @@ class MainWindow(QMainWindow):
         controller = self._functional_calibration_controller
         if controller is None:
             return
-        position = controller.open_mandible()
-        self._show_functional_position(position)
-        self.statusBar().showMessage(
-            f"Apertura mandibular — {controller.opening_angle_degrees:.1f}°"
+        self._run_functional_movement(
+            controller.open_mandible,
+            lambda: (
+                "Apertura mandibular — "
+                f"{controller.opening_angle_degrees:.1f}°"
+            ),
+        )
+
+    def _set_mandibular_opening(self, angle_degrees: float) -> None:
+        """Set one exact decimal hinge opening from the panel slider."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            lambda: controller.set_opening(angle_degrees),
+            lambda: (
+                "Apertura mandibular — "
+                f"{controller.opening_angle_degrees:.1f}°"
+            ),
         )
 
     def _close_mandible(self) -> None:
@@ -1113,10 +1202,12 @@ class MainWindow(QMainWindow):
         controller = self._functional_calibration_controller
         if controller is None:
             return
-        position = controller.close_mandible()
-        self._show_functional_position(position)
-        self.statusBar().showMessage(
-            f"Apertura mandibular — {controller.opening_angle_degrees:.1f}°"
+        self._run_functional_movement(
+            controller.close_mandible,
+            lambda: (
+                "Apertura mandibular — "
+                f"{controller.opening_angle_degrees:.1f}°"
+            ),
         )
 
     def _advance_mandible(self) -> None:
@@ -1125,11 +1216,26 @@ class MainWindow(QMainWindow):
         controller = self._functional_calibration_controller
         if controller is None:
             return
-        position = controller.advance()
-        self._show_functional_position(position)
-        self.statusBar().showMessage(
-            "Protrusión mandibular — "
-            f"{controller.protrusion_distance_mm:.1f} mm"
+        self._run_functional_movement(
+            controller.advance,
+            lambda: (
+                "Protrusión mandibular — "
+                f"{controller.protrusion_distance_mm:.1f} mm"
+            ),
+        )
+
+    def _set_mandibular_protrusion(self, distance_mm: float) -> None:
+        """Set one exact decimal protrusive distance from the panel slider."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            lambda: controller.set_protrusion(distance_mm),
+            lambda: (
+                "Protrusión mandibular — "
+                f"{controller.protrusion_distance_mm:.1f} mm"
+            ),
         )
 
     def _retreat_mandible(self) -> None:
@@ -1138,12 +1244,260 @@ class MainWindow(QMainWindow):
         controller = self._functional_calibration_controller
         if controller is None:
             return
-        position = controller.retreat()
-        self._show_functional_position(position)
-        self.statusBar().showMessage(
-            "Protrusión mandibular — "
-            f"{controller.protrusion_distance_mm:.1f} mm"
+        self._run_functional_movement(
+            controller.retreat,
+            lambda: (
+                "Protrusión mandibular — "
+                f"{controller.protrusion_distance_mm:.1f} mm"
+            ),
         )
+
+    def _move_mandible_left(self) -> None:
+        """Move one guided lateral step toward the patient's left."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            controller.move_left,
+            lambda: self._lateral_status_text(
+                controller.lateral_angle_degrees
+            ),
+        )
+
+    def _move_mandible_right(self) -> None:
+        """Move one guided lateral step toward the patient's right."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            controller.move_right,
+            lambda: self._lateral_status_text(
+                controller.lateral_angle_degrees
+            ),
+        )
+
+    def _set_mandibular_lateral(self, angle_degrees: float) -> None:
+        """Set one exact signed lateral angle from the panel slider."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            lambda: controller.set_lateral(angle_degrees),
+            lambda: self._lateral_status_text(
+                controller.lateral_angle_degrees
+            ),
+        )
+
+    def _adjust_occlusion_close(self) -> None:
+        """Apply one independent negative occlusal adjustment step."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            controller.adjust_close,
+            lambda: (
+                "Ajuste oclusal fino — "
+                f"{controller.adjustment_angle_degrees:.1f}° cierre"
+            ),
+        )
+
+    def _adjust_occlusion_open(self) -> None:
+        """Apply one independent positive occlusal adjustment step."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            controller.adjust_open,
+            lambda: (
+                "Ajuste oclusal fino — "
+                f"+{controller.adjustment_angle_degrees:.1f}° apertura"
+            ),
+        )
+
+    def _reset_occlusal_adjustment(self) -> None:
+        """Remove only the independent occlusal fine adjustment."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            controller.reset_adjustment,
+            lambda: "Ajuste oclusal fino restablecido — 0.0°",
+        )
+
+    def _save_protrusive_limit(self) -> None:
+        """Save the operator-confirmed protrusive edge-to-edge position."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._save_functional_limit(
+            controller.save_protrusive_limit,
+            lambda limit: (
+                "Borde a borde guardado — "
+                f"{limit.protrusion_distance_mm:.1f} mm | "
+                f"ajuste {limit.adjustment_angle_degrees:+.1f}°"
+            ),
+        )
+
+    def _save_right_canine_limit(self) -> None:
+        """Save the operator-confirmed right canine protection."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._save_functional_limit(
+            controller.save_right_canine_limit,
+            lambda limit: (
+                "Protección canina derecha guardada — "
+                f"{limit.lateral_angle_degrees:+.1f}° | "
+                f"ajuste {limit.adjustment_angle_degrees:+.1f}°"
+            ),
+        )
+
+    def _save_left_canine_limit(self) -> None:
+        """Save the operator-confirmed left canine protection."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._save_functional_limit(
+            controller.save_left_canine_limit,
+            lambda limit: (
+                "Protección canina izquierda guardada — "
+                f"{limit.lateral_angle_degrees:+.1f}° | "
+                f"ajuste {limit.adjustment_angle_degrees:+.1f}°"
+            ),
+        )
+
+    def _save_functional_limit(
+        self,
+        action: Callable[[], Any],
+        message: Callable[[Any], str],
+    ) -> None:
+        """Save one valid endpoint and refresh its effective movement range."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        try:
+            limit = action()
+        except ValueError as error:
+            self.statusBar().showMessage(
+                f"Límite no guardado — {error}"
+            )
+            return
+        self._show_functional_position(controller.position)
+        self.statusBar().showMessage(message(limit))
+
+    def _go_to_protrusive_limit(self) -> None:
+        """Return to the saved protrusive edge-to-edge position."""
+
+        self._go_to_functional_limit(
+            FunctionalLimitKind.PROTRUSIVE_EDGE_TO_EDGE,
+            "Borde a borde protrusivo reproducido",
+        )
+
+    def _go_to_right_canine_limit(self) -> None:
+        """Return to the saved right canine protection."""
+
+        self._go_to_functional_limit(
+            FunctionalLimitKind.RIGHT_CANINE_CUSP_TO_CUSP,
+            "Protección canina derecha reproducida",
+        )
+
+    def _go_to_left_canine_limit(self) -> None:
+        """Return to the saved left canine protection."""
+
+        self._go_to_functional_limit(
+            FunctionalLimitKind.LEFT_CANINE_CUSP_TO_CUSP,
+            "Protección canina izquierda reproducida",
+        )
+
+    def _go_to_functional_limit(
+        self,
+        kind: FunctionalLimitKind,
+        message: str,
+    ) -> None:
+        """Reproduce one complete saved movement and fine adjustment."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            lambda: controller.go_to_limit(kind),
+            lambda: message,
+        )
+
+    def _clear_functional_limits(self) -> None:
+        """Remove all endpoints so the operator can recalibrate them."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        controller.clear_limits()
+        self._show_functional_position(controller.position)
+        self.statusBar().showMessage(
+            "Límites funcionales borrados — recalibración disponible"
+        )
+
+    def _run_functional_movement(
+        self,
+        action: Callable[[], Any],
+        message: Callable[[], str],
+    ) -> None:
+        """Render one accepted movement and visibly reject invalid geometry."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        try:
+            position = action()
+        except ValueError as error:
+            self._show_functional_position(controller.position)
+            self.statusBar().showMessage(
+                f"Movimiento no aceptado — {error}"
+            )
+            return
+        self._show_functional_position(position)
+        self.statusBar().showMessage(message())
+
+    def _zero_lateral(self) -> None:
+        """Center lateral movement while preserving opening and protrusion."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        self._run_functional_movement(
+            lambda: controller.set_lateral(0.0),
+            lambda: self._lateral_status_text(
+                controller.lateral_angle_degrees
+            ),
+        )
+
+    def _show_lateral_status(self, angle_degrees: float) -> None:
+        """Describe the current signed lateral position."""
+
+        self.statusBar().showMessage(
+            self._lateral_status_text(angle_degrees)
+        )
+
+    @staticmethod
+    def _lateral_status_text(angle_degrees: float) -> str:
+        """Format one signed lateral value for the status bar."""
+
+        if angle_degrees > 0.0:
+            value = f"+{angle_degrees:.1f}° derecha"
+        elif angle_degrees < 0.0:
+            value = f"{angle_degrees:.1f}° izquierda"
+        else:
+            value = "0.0°"
+        return f"Lateralidad mandibular — {value}"
 
     def _return_to_rc(self) -> None:
         """Return every calibrated movement component exactly to RC."""
@@ -1199,11 +1553,33 @@ class MainWindow(QMainWindow):
 
         controller = self._functional_calibration_controller
         if controller is not None:
-            self.functional_calibration_panel.show_opening(
-                controller.opening_angle_degrees
+            self.functional_calibration_panel.show_position(
+                opening_angle_degrees=(
+                    controller.opening_angle_degrees
+                ),
+                protrusion_distance_mm=(
+                    controller.protrusion_distance_mm
+                ),
+                lateral_angle_degrees=(
+                    controller.lateral_angle_degrees
+                ),
+                maximum_translation_mm=(
+                    controller.maximum_protrusion_distance_mm
+                ),
+                maximum_right_lateral_degrees=(
+                    controller.maximum_right_lateral_angle_degrees
+                ),
+                maximum_left_lateral_degrees=(
+                    controller.maximum_left_lateral_angle_degrees
+                ),
+                adjustment_angle_degrees=(
+                    controller.adjustment_angle_degrees
+                ),
             )
-            self.functional_calibration_panel.show_protrusion(
-                controller.protrusion_distance_mm
+            self.functional_calibration_panel.show_limits(
+                protrusive_limit=controller.limits.protrusive,
+                right_canine_limit=controller.limits.right_canine,
+                left_canine_limit=controller.limits.left_canine,
             )
         self.scene.plotter.render()
 
