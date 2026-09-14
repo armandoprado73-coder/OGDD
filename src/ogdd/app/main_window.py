@@ -48,10 +48,15 @@ from ogdd.articulator.occlusal_closure_controller import (
     OcclusalClosureController,
 )
 from ogdd.io.stl import STLReader
+from ogdd.registration.centric_relation_registration import (
+    CentricRelationRegistration,
+)
+from ogdd.registration.occlusal_record_builder import OcclusalRecordBuilder
 
 from .functional_calibration_panel import FunctionalCalibrationPanel
 from .mounting_panel import MountingPanel
 from .orientation_panel import OrientationPanel
+from .rc_mic_diagnosis_panel import RcMicDiagnosisPanel
 from .scene_view import SceneView
 from .study_import_dialog import StudyFileSelection, StudyImportDialog
 
@@ -74,6 +79,9 @@ class MainWindow(QMainWindow):
         ("axes", "Ejes anatómicos"),
         ("condylar_guides", "Guías condilares"),
         ("functional_limits", "Límites funcionales"),
+        ("mic_seeds", "Semillas del registro MIC"),
+        ("mandibular_mic", "Mandíbula en MIC"),
+        ("condylar_displacement", "Desplazamiento condilar RC–MIC"),
     )
 
     CLINICAL_STEPS = (
@@ -104,6 +112,9 @@ class MainWindow(QMainWindow):
         self._hinge_axis = None
         self._condylar_guides = None
         self._functional_calibration_controller = None
+        self._mic_seed_vertices: dict[str, int] = {}
+        self._rc_mic_registration = None
+        self._condylar_displacement = None
 
         self.scene = SceneView(self)
         self.setCentralWidget(self.scene)
@@ -260,6 +271,28 @@ class MainWindow(QMainWindow):
             self._return_to_rc
         )
 
+        self.rc_mic_diagnosis_panel = RcMicDiagnosisPanel()
+        self.rc_mic_diagnosis_panel.setVisible(False)
+        self.rc_mic_diagnosis_scroll = QScrollArea()
+        self.rc_mic_diagnosis_scroll.setWidgetResizable(True)
+        self.rc_mic_diagnosis_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.rc_mic_diagnosis_scroll.setWidget(
+            self.rc_mic_diagnosis_panel
+        )
+        self.rc_mic_diagnosis_scroll.setVisible(False)
+        self.rc_mic_diagnosis_panel.select_maxillary_seed_requested.connect(
+            lambda: self._start_mic_seed_pick("maxillary")
+        )
+        self.rc_mic_diagnosis_panel.select_mandibular_seed_requested.connect(
+            lambda: self._start_mic_seed_pick("mandibular")
+        )
+        self.rc_mic_diagnosis_panel.diagnose_requested.connect(
+            self._diagnose_rc_mic
+        )
+        self.rc_mic_diagnosis_panel.reset_requested.connect(
+            self._reset_rc_mic_diagnosis
+        )
+
         self.workflow_message = QLabel(
             "Importe los modelos y el registro que forman el estudio."
         )
@@ -276,6 +309,7 @@ class MainWindow(QMainWindow):
         workflow_layout.addWidget(self.orientation_panel, 1)
         workflow_layout.addWidget(self.mounting_panel, 1)
         workflow_layout.addWidget(self.functional_calibration_scroll, 1)
+        workflow_layout.addWidget(self.rc_mic_diagnosis_scroll, 1)
 
         self.workflow_list.currentRowChanged.connect(
             self._workflow_step_changed
@@ -515,6 +549,9 @@ class MainWindow(QMainWindow):
             "maxillary_rc",
             "mandibular_rc",
             "mic_record",
+            "mic_seeds",
+            "mandibular_mic",
+            "condylar_displacement",
         ):
             self.scene.clear_layer(layer_name, render=False)
             action = self.layer_actions[layer_name]
@@ -620,6 +657,7 @@ class MainWindow(QMainWindow):
 
         self._study_files = selection
         self._study_meshes = meshes
+        self._reset_rc_mic_diagnosis()
         self._clear_anatomical_state()
         self.orientation_panel.set_study_available(True)
         self._update_study_tree(selection, meshes)
@@ -682,14 +720,18 @@ class MainWindow(QMainWindow):
         orientation_selected = row == 1
         mounting_selected = row == 2
         calibration_selected = row == 3
+        diagnosis_selected = row == 5
         self.orientation_panel.setVisible(orientation_selected)
         self.mounting_panel.setVisible(mounting_selected)
         self.functional_calibration_panel.setVisible(calibration_selected)
         self.functional_calibration_scroll.setVisible(calibration_selected)
+        self.rc_mic_diagnosis_panel.setVisible(diagnosis_selected)
+        self.rc_mic_diagnosis_scroll.setVisible(diagnosis_selected)
         self.workflow_message.setVisible(
             not orientation_selected
             and not mounting_selected
             and not calibration_selected
+            and not diagnosis_selected
         )
 
         messages = {
@@ -704,6 +746,7 @@ class MainWindow(QMainWindow):
             not orientation_selected
             and not mounting_selected
             and not calibration_selected
+            and not diagnosis_selected
         ):
             self.workflow_message.setText(
                 messages.get(row, "Paso clínico en preparación.")
@@ -746,6 +789,9 @@ class MainWindow(QMainWindow):
             "hinge_axis",
             "axes",
             "condylar_guides",
+            "mic_seeds",
+            "mandibular_mic",
+            "condylar_displacement",
         ):
             self.scene.set_layer_pickable(
                 layer,
@@ -804,12 +850,288 @@ class MainWindow(QMainWindow):
             "hinge_axis",
             "axes",
             "condylar_guides",
+            "mic_seeds",
+            "mandibular_mic",
+            "condylar_displacement",
         ):
             self.scene.set_layer_pickable(layer, True)
 
         for layer, visible in self._visibility_before_pick.items():
             self._set_layer_visibility(layer, visible)
         self._visibility_before_pick.clear()
+
+    def _start_mic_seed_pick(self, arch: str) -> None:
+        """Request one maxillary or mandibular seed on the combined MIC mesh."""
+
+        if arch not in ("maxillary", "mandibular"):
+            raise ValueError("MIC seed arch must be maxillary or mandibular.")
+        if "mic_record" not in self._study_meshes:
+            QMessageBox.information(
+                self,
+                "Registro MIC no disponible",
+                "Cargue primero un registro MIC combinado.",
+            )
+            return
+        if self._coordinate_system is None or self._hinge_axis is None:
+            QMessageBox.information(
+                self,
+                "Montaje en RC pendiente",
+                "Confirme la orientación y construya el montaje en RC.",
+            )
+            return
+
+        self._finish_landmark_pick()
+        selectable_layers = (
+            "maxillary_rc",
+            "mandibular_rc",
+            "mic_record",
+            "landmarks",
+            "balkwill",
+            "bonwill",
+            "virtual_condyles",
+            "hinge_axis",
+            "axes",
+            "condylar_guides",
+            "mic_seeds",
+            "mandibular_mic",
+            "condylar_displacement",
+        )
+        self._visibility_before_pick = {
+            layer: self.layer_actions[layer].isChecked()
+            for layer in selectable_layers
+        }
+        for layer in selectable_layers:
+            self._set_layer_visibility(layer, layer == "mic_record")
+            self.scene.set_layer_pickable(
+                layer,
+                layer == "mic_record",
+            )
+
+        name = "maxilar" if arch == "maxillary" else "mandíbula"
+        self.statusBar().showMessage(
+            f"Selección MIC activa — haga clic sobre el {name}"
+        )
+        self.scene.enable_surface_pick(
+            lambda point, selected_arch=arch: (
+                self._mic_seed_picked(selected_arch, point)
+            )
+        )
+
+    def _mic_seed_picked(self, arch: str, displayed_point) -> None:
+        """Resolve a displayed MIC point to its nearest original vertex."""
+
+        point = np.asarray(displayed_point, dtype=float)
+        if point.shape != (3,):
+            return
+        coordinate_system = self._coordinate_system
+        if coordinate_system is None:
+            return
+
+        world_point = coordinate_system.to_world(point)
+        mic_mesh = self._study_meshes["mic_record"]
+        distances_squared = np.sum(
+            (mic_mesh.vertices - world_point) ** 2,
+            axis=1,
+        )
+        vertex_index = int(np.argmin(distances_squared))
+        self._mic_seed_vertices[arch] = vertex_index
+
+        selected_points = {
+            name: coordinate_system.to_local(mic_mesh.vertices[index])
+            for name, index in self._mic_seed_vertices.items()
+        }
+        selected_point = selected_points[arch]
+        self.rc_mic_diagnosis_panel.show_seed(
+            arch,
+            vertex_index,
+            selected_point,
+        )
+        self.scene.show_mic_seeds(selected_points, render=False)
+        self._finish_landmark_pick()
+        self.layer_actions["mic_seeds"].setEnabled(True)
+        self.layer_actions["mic_seeds"].setChecked(True)
+        self.scene.set_layer_visible("mic_seeds", True)
+        name = "maxilar" if arch == "maxillary" else "mandíbula"
+        self.statusBar().showMessage(
+            f"Semilla del {name} MIC guardada — vértice {vertex_index:,}"
+        )
+
+    def _diagnose_rc_mic(self) -> None:
+        """Separate the combined record and calculate RC-to-MIC displacement."""
+
+        required_seeds = {"maxillary", "mandibular"}
+        if not required_seeds.issubset(self._mic_seed_vertices):
+            return
+        if (
+            self._coordinate_system is None
+            or self._bonwill is None
+            or "mic_record" not in self._study_meshes
+        ):
+            return
+
+        controller = self._functional_calibration_controller
+        if controller is not None:
+            controller.reset_movement()
+            position = controller.reset_adjustment()
+            self._show_functional_position(position)
+
+        self.rc_mic_diagnosis_panel.show_running()
+        self.statusBar().showMessage("Calculando diagnóstico RC–MIC…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            mic_record = OcclusalRecordBuilder.from_seed_vertices(
+                mesh=self._study_meshes["mic_record"],
+                maxillary_seed_vertex=(
+                    self._mic_seed_vertices["maxillary"]
+                ),
+                mandibular_seed_vertex=(
+                    self._mic_seed_vertices["mandibular"]
+                ),
+            )
+            registration = CentricRelationRegistration.register(
+                maxillary_mesh=self._study_meshes["maxillary_rc"],
+                mandibular_rc_mesh=self._study_meshes["mandibular_rc"],
+                mic_record=mic_record,
+                maximum_iterations=50,
+                tolerance=1e-6,
+                trim_fraction=0.90,
+                sample_size=10000,
+            )
+            if not registration.converged:
+                raise ValueError(
+                    "el registro iterativo no alcanzó convergencia."
+                )
+
+            displacement = registration.condylar_displacement(
+                right_condyle_point=self._bonwill.right_condyle.point,
+                left_condyle_point=self._bonwill.left_condyle.point,
+            )
+            coordinate_system = self._coordinate_system
+            right_vector = (
+                coordinate_system.to_local(displacement.right_mic_point)
+                - coordinate_system.to_local(displacement.right_rc_point)
+            )
+            left_vector = (
+                coordinate_system.to_local(displacement.left_mic_point)
+                - coordinate_system.to_local(displacement.left_rc_point)
+            )
+            mandibular_mic_points = (
+                registration.mandibular_rc_to_mic_transform.apply(
+                    self._study_meshes["mandibular_rc"].vertices
+                )
+            )
+
+            self._rc_mic_registration = registration
+            self._condylar_displacement = displacement
+            self.scene.show_rc_mic_diagnosis(
+                mandibular_rc_mesh=self._study_meshes["mandibular_rc"],
+                mandibular_mic_points=mandibular_mic_points,
+                displacement=displacement,
+                coordinate_system=coordinate_system,
+            )
+            self._set_layer_visibility("mic_record", False)
+            for layer_name in (
+                "mandibular_mic",
+                "condylar_displacement",
+            ):
+                action = self.layer_actions[layer_name]
+                action.setEnabled(True)
+                action.setChecked(True)
+                self.scene.set_layer_visible(layer_name, True, render=False)
+
+            self.rc_mic_diagnosis_panel.show_result(
+                registration=registration,
+                right_vector=right_vector,
+                left_vector=left_vector,
+            )
+            self._update_rc_mic_tree(right_vector, left_vector)
+            self.scene.plotter.render()
+            self.statusBar().showMessage(
+                "Diagnóstico RC–MIC calculado — vectores expresados en X/Y/Z"
+            )
+        except (TypeError, ValueError) as error:
+            self.rc_mic_diagnosis_panel.show_error(str(error))
+            self.statusBar().showMessage(
+                f"Diagnóstico RC–MIC no calculado — {error}"
+            )
+            QMessageBox.warning(
+                self,
+                "Diagnóstico RC–MIC no calculado",
+                str(error),
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _reset_rc_mic_diagnosis(self) -> None:
+        """Remove MIC seeds and computed diagnostic actors."""
+
+        if hasattr(self, "scene"):
+            self._finish_landmark_pick()
+        self._mic_seed_vertices.clear()
+        self._rc_mic_registration = None
+        self._condylar_displacement = None
+        for layer_name in (
+            "mic_seeds",
+            "mandibular_mic",
+            "condylar_displacement",
+        ):
+            if hasattr(self, "scene"):
+                self.scene.clear_layer(layer_name, render=False)
+            action = getattr(self, "layer_actions", {}).get(layer_name)
+            if action is not None:
+                action.setChecked(False)
+                action.setEnabled(False)
+        if hasattr(self, "rc_mic_diagnosis_panel"):
+            self.rc_mic_diagnosis_panel.clear()
+        section = getattr(self, "study_sections", {}).get("results")
+        if section is not None:
+            section.takeChildren()
+        if hasattr(self, "scene"):
+            self.scene.plotter.render()
+
+    def _update_rc_mic_tree(
+        self,
+        right_vector: np.ndarray,
+        left_vector: np.ndarray,
+    ) -> None:
+        """Expose the current diagnosis in the study results tree."""
+
+        section = self.study_sections["results"]
+        section.takeChildren()
+        registration = self._rc_mic_registration
+        entries = (
+            (
+                "Registro RC–MIC convergente",
+                "RMSE maxilar "
+                f"{registration.maxillary_registration.root_mean_square_error:.6f} "
+                "mm | "
+                "RMSE mandibular "
+                f"{registration.mandibular_registration.root_mean_square_error:.6f} mm",
+            ),
+            (
+                f"Cóndilo derecho — {np.linalg.norm(right_vector):.4f} mm",
+                self._format_diagnostic_vector(right_vector),
+            ),
+            (
+                f"Cóndilo izquierdo — {np.linalg.norm(left_vector):.4f} mm",
+                self._format_diagnostic_vector(left_vector),
+            ),
+        )
+        for label, tooltip in entries:
+            item = QTreeWidgetItem(section, [label])
+            item.setToolTip(0, tooltip)
+        section.setExpanded(True)
+
+    @staticmethod
+    def _format_diagnostic_vector(vector: np.ndarray) -> str:
+        """Format one local RC-to-MIC vector for the results tree."""
+
+        return (
+            f"X {vector[0]:+.4f} mm | "
+            f"Y {vector[1]:+.4f} mm | "
+            f"Z {vector[2]:+.4f} mm"
+        )
 
     def _set_layer_visibility(
         self,
@@ -1121,6 +1443,10 @@ class MainWindow(QMainWindow):
             ),
         )
         self._show_functional_position(functional_controller.position)
+        self.rc_mic_diagnosis_panel.set_prerequisites(
+            mic_available="mic_record" in self._study_meshes,
+            mounting_available=True,
+        )
         self._update_articulator_tree()
         self.scene.reset_camera()
         self.statusBar().showMessage(
@@ -1145,6 +1471,7 @@ class MainWindow(QMainWindow):
         self._hinge_axis = None
         self._condylar_guides = None
         self._functional_calibration_controller = None
+        self._reset_rc_mic_diagnosis()
         for layer_name in (
             "bonwill",
             "virtual_condyles",
@@ -1163,6 +1490,11 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self, "functional_calibration_panel"):
             self.functional_calibration_panel.set_mounting_available(False)
+        if hasattr(self, "rc_mic_diagnosis_panel"):
+            self.rc_mic_diagnosis_panel.set_prerequisites(
+                mic_available="mic_record" in self._study_meshes,
+                mounting_available=False,
+            )
         section = self.study_sections.get("articulator")
         if section is not None:
             section.takeChildren()

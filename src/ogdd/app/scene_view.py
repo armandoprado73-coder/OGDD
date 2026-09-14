@@ -205,6 +205,50 @@ class SceneView(QFrame):
         if render:
             self.plotter.render()
 
+    def show_mic_seeds(
+        self,
+        points: dict[str, np.ndarray],
+        *,
+        render: bool = True,
+    ) -> None:
+        """Show the two operator-selected MIC component seeds."""
+
+        self.clear_layer("mic_seeds", render=False)
+        definitions = {
+            "maxillary": ("SEMILLA MAXILAR", "mistyrose"),
+            "mandibular": ("SEMILLA MANDIBULAR", "gold"),
+        }
+        for arch, point in points.items():
+            label, color = definitions[arch]
+            point = np.asarray(point, dtype=float)
+            marker = pv.Sphere(
+                radius=0.9,
+                center=point,
+                theta_resolution=24,
+                phi_resolution=24,
+            )
+            marker_actor = self.plotter.add_mesh(
+                marker,
+                color=color,
+                name=f"mic_{arch}_seed_marker",
+                reset_camera=False,
+            )
+            label_actor = self.plotter.add_point_labels(
+                np.asarray([point]),
+                [label],
+                show_points=False,
+                always_visible=True,
+                font_size=11,
+                text_color=color,
+                shape=None,
+                name=f"mic_{arch}_seed_label",
+            )
+            self.register_actor("mic_seeds", marker_actor)
+            self.register_actor("mic_seeds", label_actor)
+
+        if render:
+            self.plotter.render()
+
     def show_balkwill(self, points: dict[str, np.ndarray]) -> None:
         """Draw the closed Balkwill triangle from local landmarks."""
 
@@ -427,6 +471,115 @@ class SceneView(QFrame):
             )
             self.register_actor("condylar_guides", trajectory_actor)
 
+        self.plotter.render()
+
+    def show_rc_mic_diagnosis(
+        self,
+        *,
+        mandibular_rc_mesh,
+        mandibular_mic_points: np.ndarray,
+        displacement,
+        coordinate_system,
+        vector_magnification: float = 8.0,
+    ) -> None:
+        """Overlay mandibular MIC and visualize bilateral RC-to-MIC vectors."""
+
+        self.clear_layer("mandibular_mic", render=False)
+        self.clear_layer("condylar_displacement", render=False)
+
+        mic_surface = self._to_polydata(mandibular_rc_mesh)
+        mic_surface.points = coordinate_system.to_local(
+            np.asarray(mandibular_mic_points, dtype=float)
+        )
+        mic_actor = self.plotter.add_mesh(
+            mic_surface,
+            color="gold",
+            opacity=0.55,
+            show_edges=False,
+            smooth_shading=True,
+            name="mandibular_mic",
+            reset_camera=False,
+        )
+        self.register_actor("mandibular_mic", mic_actor)
+        self._layer_surfaces["mandibular_mic"] = mic_surface
+
+        right_rc = coordinate_system.to_local(displacement.right_rc_point)
+        right_mic = coordinate_system.to_local(displacement.right_mic_point)
+        left_rc = coordinate_system.to_local(displacement.left_rc_point)
+        left_mic = coordinate_system.to_local(displacement.left_mic_point)
+
+        rc_hinge = pv.Line(right_rc, left_rc)
+        mic_hinge = pv.Line(right_mic, left_mic)
+        rc_hinge_actor = self.plotter.add_mesh(
+            rc_hinge,
+            color="cornflowerblue",
+            line_width=5,
+            render_lines_as_tubes=True,
+            name="rc_diagnostic_hinge",
+            reset_camera=False,
+        )
+        mic_hinge_actor = self.plotter.add_mesh(
+            mic_hinge,
+            color="goldenrod",
+            line_width=5,
+            render_lines_as_tubes=True,
+            name="mic_diagnostic_hinge",
+            reset_camera=False,
+        )
+        self.register_actor("condylar_displacement", rc_hinge_actor)
+        self.register_actor("condylar_displacement", mic_hinge_actor)
+
+        for side, rc_point, mic_point, color in (
+            ("right", right_rc, right_mic, "deepskyblue"),
+            ("left", left_rc, left_mic, "magenta"),
+        ):
+            mic_condyle = pv.Sphere(
+                radius=3.0,
+                center=mic_point,
+                theta_resolution=36,
+                phi_resolution=36,
+            )
+            condyle_actor = self.plotter.add_mesh(
+                mic_condyle,
+                color="gold",
+                opacity=0.70,
+                smooth_shading=True,
+                name=f"{side}_mic_condyle",
+                reset_camera=False,
+            )
+            self.register_actor("condylar_displacement", condyle_actor)
+
+            vector = mic_point - rc_point
+            distance = float(np.linalg.norm(vector))
+            if np.isclose(distance, 0.0):
+                continue
+            arrow = pv.Arrow(
+                start=rc_point,
+                direction=vector,
+                scale=distance * float(vector_magnification),
+                tip_length=0.18,
+                tip_radius=0.04,
+                shaft_radius=0.015,
+            )
+            arrow_actor = self.plotter.add_mesh(
+                arrow,
+                color=color,
+                name=f"{side}_rc_mic_vector",
+                reset_camera=False,
+            )
+            self.register_actor("condylar_displacement", arrow_actor)
+
+        labels_actor = self.plotter.add_point_labels(
+            np.asarray([right_rc, left_rc, right_mic, left_mic]),
+            ["RC D", "RC I", "MIC D", "MIC I"],
+            show_points=False,
+            always_visible=True,
+            font_size=10,
+            text_color="white",
+            shape=None,
+            name="rc_mic_condyle_labels",
+        )
+        self.register_actor("condylar_displacement", labels_actor)
         self.plotter.render()
 
     def finish_study_load(self) -> None:
