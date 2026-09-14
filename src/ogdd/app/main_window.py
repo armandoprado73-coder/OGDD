@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import numpy as np
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QDockWidget,
+    QFileDialog,
     QFrame,
     QLabel,
     QListWidget,
@@ -34,6 +37,7 @@ from ogdd.articulator.bonwill_builder import BonwillBuilder
 from ogdd.articulator.combined_controller import CombinedController
 from ogdd.articulator.combined_movement import CombinedMovement
 from ogdd.articulator.condylar_guide_builder import CondylarGuideBuilder
+from ogdd.articulator.configuration import ArticulatorConfiguration
 from ogdd.articulator.functional_calibration_controller import (
     FunctionalCalibrationController,
 )
@@ -57,7 +61,10 @@ from .functional_calibration_panel import FunctionalCalibrationPanel
 from .mounting_panel import MountingPanel
 from .orientation_panel import OrientationPanel
 from .rc_mic_diagnosis_panel import RcMicDiagnosisPanel
+from .results_export import ResultsExporter, StudyResultsSnapshot
+from .results_export_panel import ResultsExportPanel
 from .scene_view import SceneView
+from .study_archive import StudyArchive
 from .study_import_dialog import StudyFileSelection, StudyImportDialog
 
 
@@ -115,6 +122,9 @@ class MainWindow(QMainWindow):
         self._mic_seed_vertices: dict[str, int] = {}
         self._rc_mic_registration = None
         self._condylar_displacement = None
+        self._study_path: Path | None = None
+        self._study_dirty = False
+        self._restoring_study = False
 
         self.scene = SceneView(self)
         self.setCentralWidget(self.scene)
@@ -292,6 +302,35 @@ class MainWindow(QMainWindow):
         self.rc_mic_diagnosis_panel.reset_requested.connect(
             self._reset_rc_mic_diagnosis
         )
+        self.rc_mic_diagnosis_panel.view_rc_requested.connect(
+            lambda: self._set_rc_mic_diagnostic_view("rc")
+        )
+        self.rc_mic_diagnosis_panel.view_mic_requested.connect(
+            lambda: self._set_rc_mic_diagnostic_view("mic")
+        )
+        self.rc_mic_diagnosis_panel.view_overlay_requested.connect(
+            lambda: self._set_rc_mic_diagnostic_view("overlay")
+        )
+
+        self.results_export_panel = ResultsExportPanel()
+        self.results_export_panel.setVisible(False)
+        self.results_export_scroll = QScrollArea()
+        self.results_export_scroll.setWidgetResizable(True)
+        self.results_export_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.results_export_scroll.setWidget(self.results_export_panel)
+        self.results_export_scroll.setVisible(False)
+        self.results_export_panel.save_study_requested.connect(
+            self._save_study_as
+        )
+        self.results_export_panel.export_pdf_requested.connect(
+            self._export_results_pdf
+        )
+        self.results_export_panel.export_csv_requested.connect(
+            self._export_results_csv
+        )
+        self.results_export_panel.export_png_requested.connect(
+            self._export_scene_png
+        )
 
         self.workflow_message = QLabel(
             "Importe los modelos y el registro que forman el estudio."
@@ -310,6 +349,7 @@ class MainWindow(QMainWindow):
         workflow_layout.addWidget(self.mounting_panel, 1)
         workflow_layout.addWidget(self.functional_calibration_scroll, 1)
         workflow_layout.addWidget(self.rc_mic_diagnosis_scroll, 1)
+        workflow_layout.addWidget(self.results_export_scroll, 1)
 
         self.workflow_list.currentRowChanged.connect(
             self._workflow_step_changed
@@ -351,18 +391,20 @@ class MainWindow(QMainWindow):
         )
         self.open_action = self._action(
             "&Abrir estudio…",
-            self._show_next_step,
+            self._open_study,
             shortcut=QKeySequence.StandardKey.Open,
             status_tip="Abrir un estudio existente",
         )
         self.save_action = self._action(
             "&Guardar",
+            self._save_study,
             shortcut=QKeySequence.StandardKey.Save,
             status_tip="Guardar el estudio actual",
             enabled=False,
         )
         self.save_as_action = self._action(
             "Guardar &como…",
+            self._save_study_as,
             shortcut=QKeySequence.StandardKey.SaveAs,
             enabled=False,
         )
@@ -374,6 +416,7 @@ class MainWindow(QMainWindow):
         )
         self.export_action = self._action(
             "&Exportar resultados…",
+            lambda: self.workflow_list.setCurrentRow(6),
             enabled=False,
         )
         self.exit_action = self._action(
@@ -451,6 +494,7 @@ class MainWindow(QMainWindow):
         )
         self.capture_action = self._action(
             "Capturar imagen",
+            self._export_scene_png,
             enabled=False,
         )
         self.preferences_action = self._action(
@@ -530,20 +574,402 @@ class MainWindow(QMainWindow):
             5000,
         )
 
+    def _study_display_name(self) -> str:
+        """Return the portable study name used by panels and exports."""
+
+        if self._study_path is not None:
+            return self._study_path.stem
+        if self._study_files is not None:
+            return self._study_files.mandibular_rc.stem
+        return "estudio_ogdd"
+
+    def _set_study_actions_enabled(self, enabled: bool) -> None:
+        """Synchronize every action that requires a loaded study."""
+
+        self.save_action.setEnabled(enabled)
+        self.save_as_action.setEnabled(enabled)
+        self.export_action.setEnabled(enabled)
+        self.capture_action.setEnabled(enabled)
+        self.results_export_panel.set_study_available(enabled)
+
+    def _mark_study_dirty(self) -> None:
+        """Record one user-visible state change outside archive restoration."""
+
+        if self._restoring_study or self._study_files is None:
+            return
+        self._study_dirty = True
+        self._update_window_title()
+
+    def _state_changed(self) -> None:
+        """Mark and redisplay one accepted clinical state change."""
+
+        self._mark_study_dirty()
+        self._refresh_results_panel()
+
+    def _mark_study_clean(self, path: Path | None = None) -> None:
+        """Record that the current state is safely represented on disk."""
+
+        if path is not None:
+            self._study_path = path
+        self._study_dirty = False
+        self._update_window_title()
+
+    def _update_window_title(self) -> None:
+        """Show the native filename and unsaved-change marker."""
+
+        if self._study_path is None:
+            name = "Sin guardar" if self._study_files is not None else ""
+        else:
+            name = self._study_path.name
+        dirty = " *" if self._study_dirty else ""
+        prefix = f"{name}{dirty} — " if name else ""
+        self.setWindowTitle(prefix + self.WINDOW_TITLE)
+
+    def _confirm_discard_changes(self, action: str) -> bool:
+        """Protect unsaved studies before replacing or closing them."""
+
+        if not self._study_dirty:
+            return True
+        answer = QMessageBox.warning(
+            self,
+            "Cambios sin guardar",
+            f"El estudio tiene cambios sin guardar antes de {action}.",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            return self._save_study()
+        return answer == QMessageBox.StandardButton.Discard
+
+    def _study_filenames(self) -> dict[str, str]:
+        """Return source basenames without persisting machine-specific paths."""
+
+        if self._study_files is None:
+            return {}
+        filenames = {
+            "maxillary_rc": self._study_files.maxillary_rc.name,
+            "mandibular_rc": self._study_files.mandibular_rc.name,
+        }
+        if self._study_files.mic_record is not None:
+            filenames["mic_record"] = self._study_files.mic_record.name
+        return filenames
+
+    def _study_state(self) -> dict[str, Any]:
+        """Capture the reproducible numeric state stored inside ``.ogdd``."""
+
+        configuration = self._articulator_configuration
+        mounting = None
+        if configuration is not None:
+            mounting = {
+                "intercondylar_width": configuration.intercondylar_width,
+                "balkwill_angle_degrees": (
+                    configuration.balkwill_angle_degrees
+                ),
+                "right_condylar_guidance_degrees": (
+                    configuration.right_condylar_guidance_degrees
+                ),
+                "left_condylar_guidance_degrees": (
+                    configuration.left_condylar_guidance_degrees
+                ),
+            }
+
+        controller = self._functional_calibration_controller
+        limits = []
+        position = None
+        if controller is not None:
+            limits = [
+                {
+                    "kind": limit.kind.value,
+                    "base_opening_angle_degrees": (
+                        limit.base_opening_angle_degrees
+                    ),
+                    "adjustment_angle_degrees": (
+                        limit.adjustment_angle_degrees
+                    ),
+                    "total_opening_angle_degrees": (
+                        limit.total_opening_angle_degrees
+                    ),
+                    "lateral_angle_degrees": limit.lateral_angle_degrees,
+                    "protrusion_distance_mm": limit.protrusion_distance_mm,
+                    "working_side": (
+                        None
+                        if limit.working_side is None
+                        else limit.working_side.value
+                    ),
+                }
+                for limit in controller.limits.values
+            ]
+            position = {
+                "opening_angle_degrees": controller.opening_angle_degrees,
+                "lateral_angle_degrees": controller.lateral_angle_degrees,
+                "protrusion_distance_mm": controller.protrusion_distance_mm,
+                "adjustment_angle_degrees": controller.adjustment_angle_degrees,
+            }
+
+        return {
+            "landmarks": {
+                name: point.tolist()
+                for name, point in self._landmark_points.items()
+            },
+            "mounting": mounting,
+            "functional_limits": limits,
+            "current_position": position,
+            "mic_seed_vertices": dict(self._mic_seed_vertices),
+            "diagnosis_calculated": self._rc_mic_registration is not None,
+            "diagnostic_view": (
+                self.rc_mic_diagnosis_panel.diagnostic_view
+            ),
+            "workflow_step": self.workflow_list.currentRow(),
+            "visible_layers": {
+                name: action.isChecked()
+                for name, action in self.layer_actions.items()
+                if action.isEnabled()
+            },
+        }
+
+    def _save_study(self) -> bool:
+        """Save to the current native path or request one when necessary."""
+
+        if self._study_files is None:
+            return False
+        if self._study_path is None:
+            return self._save_study_as()
+        return self._write_study(self._study_path)
+
+    def _save_study_as(self) -> bool:
+        """Request and save one native ``.ogdd`` archive path."""
+
+        if self._study_files is None:
+            return False
+        suggested = self._study_path or Path.cwd() / (
+            f"{self._study_display_name()}.ogdd"
+        )
+        path_text, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar estudio OGDD",
+            str(suggested),
+            "Estudios OGDD (*.ogdd)",
+        )
+        if not path_text:
+            return False
+        path = Path(path_text)
+        if path.suffix.lower() != ".ogdd":
+            path = path.with_suffix(".ogdd")
+        return self._write_study(path)
+
+    def _write_study(self, path: Path) -> bool:
+        """Serialize the complete current study and report failures safely."""
+
+        self.statusBar().showMessage("Guardando estudio OGDD…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            StudyArchive.save(
+                path,
+                meshes=self._study_meshes,
+                filenames=self._study_filenames(),
+                state=self._study_state(),
+            )
+        except Exception as error:
+            QMessageBox.critical(
+                self,
+                "No fue posible guardar el estudio",
+                f"{type(error).__name__}: {error}",
+            )
+            self.statusBar().showMessage("El estudio no fue guardado.")
+            return False
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._mark_study_clean(path)
+        self._refresh_results_panel()
+        self.statusBar().showMessage(f"Estudio guardado — {path.name}")
+        return True
+
+    def _open_study(self) -> None:
+        """Load a complete native study after explicit file selection."""
+
+        if not self._confirm_discard_changes("abrir otro estudio"):
+            return
+        path_text, _ = QFileDialog.getOpenFileName(
+            self,
+            "Abrir estudio OGDD",
+            str(self._study_path.parent if self._study_path else Path.cwd()),
+            "Estudios OGDD (*.ogdd)",
+        )
+        if not path_text:
+            return
+        path = Path(path_text)
+        self.statusBar().showMessage("Abriendo estudio OGDD…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            archive = StudyArchive.load(path)
+            self._restore_study(archive, path)
+        except Exception as error:
+            QMessageBox.critical(
+                self,
+                "No fue posible abrir el estudio",
+                f"{type(error).__name__}: {error}",
+            )
+            self.statusBar().showMessage("La apertura fue cancelada.")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.statusBar().showMessage(f"Estudio abierto — {path.name}")
+
+    def _restore_study(self, archive, path: Path) -> None:
+        """Reconstruct all saved geometry and operator-confirmed state."""
+
+        filenames = archive.filenames
+        selection = StudyFileSelection(
+            maxillary_rc=Path(
+                filenames.get("maxillary_rc", "maxillary_rc.stl")
+            ),
+            mandibular_rc=Path(
+                filenames.get("mandibular_rc", "mandibular_rc.stl")
+            ),
+            mic_record=(
+                None
+                if "mic_record" not in archive.meshes
+                else Path(filenames.get("mic_record", "mic_record.stl"))
+            ),
+        )
+        self._restoring_study = True
+        try:
+            self._display_loaded_study(selection, archive.meshes)
+            state = archive.state
+            landmarks = state.get("landmarks", {})
+            if landmarks:
+                self._landmark_points = {
+                    name: np.asarray(point, dtype=float)
+                    for name, point in landmarks.items()
+                }
+                self._confirm_orientation()
+
+            mounting = state.get("mounting")
+            if mounting is not None:
+                configuration = ArticulatorConfiguration(
+                    intercondylar_width=mounting["intercondylar_width"],
+                    balkwill_angle_degrees=(
+                        mounting["balkwill_angle_degrees"]
+                    ),
+                    right_condylar_guidance_degrees=(
+                        mounting["right_condylar_guidance_degrees"]
+                    ),
+                    left_condylar_guidance_degrees=(
+                        mounting["left_condylar_guidance_degrees"]
+                    ),
+                )
+                self.mounting_panel.set_configuration(configuration)
+                self._build_rc_mounting()
+                self._restore_functional_state(state)
+                self._restore_mic_diagnosis(state)
+                if self._rc_mic_registration is not None:
+                    self._set_rc_mic_diagnostic_view(
+                        state.get("diagnostic_view", "overlay")
+                    )
+
+            visible_layers = state.get("visible_layers", {})
+            for name, visible in visible_layers.items():
+                action = self.layer_actions.get(name)
+                if action is not None and action.isEnabled():
+                    self._set_layer_visibility(name, bool(visible))
+            self.workflow_list.setCurrentRow(
+                int(state.get("workflow_step", 0))
+            )
+            self._study_path = path
+        finally:
+            self._restoring_study = False
+        self._set_study_actions_enabled(True)
+        self._mark_study_clean(path)
+        self._refresh_results_panel()
+
+    def _restore_functional_state(self, state: dict[str, Any]) -> None:
+        """Recreate saved endpoints and the current mandibular position."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        controller.clear_limits()
+        save_actions = {
+            FunctionalLimitKind.PROTRUSIVE_EDGE_TO_EDGE.value: (
+                controller.save_protrusive_limit
+            ),
+            FunctionalLimitKind.RIGHT_CANINE_CUSP_TO_CUSP.value: (
+                controller.save_right_canine_limit
+            ),
+            FunctionalLimitKind.LEFT_CANINE_CUSP_TO_CUSP.value: (
+                controller.save_left_canine_limit
+            ),
+        }
+        for saved in state.get("functional_limits", []):
+            controller.reset_movement()
+            controller.reset_adjustment()
+            controller.set_position(
+                opening_angle_degrees=saved["base_opening_angle_degrees"],
+                lateral_angle_degrees=saved["lateral_angle_degrees"],
+                protrusion_distance_mm=saved["protrusion_distance_mm"],
+            )
+            controller.set_adjustment(saved["adjustment_angle_degrees"])
+            save_actions[saved["kind"]]()
+
+        self._apply_saved_position(state.get("current_position"))
+
+    def _apply_saved_position(self, saved: dict[str, Any] | None) -> None:
+        """Restore one complete operator position after other reconstruction."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        controller.reset_movement()
+        controller.reset_adjustment()
+        if saved is not None:
+            controller.set_position(
+                opening_angle_degrees=saved["opening_angle_degrees"],
+                lateral_angle_degrees=saved["lateral_angle_degrees"],
+                protrusion_distance_mm=saved["protrusion_distance_mm"],
+            )
+            controller.set_adjustment(saved["adjustment_angle_degrees"])
+        self._show_functional_position(controller.position)
+
+    def _restore_mic_diagnosis(self, state: dict[str, Any]) -> None:
+        """Restore manual MIC seeds and deterministically recalculate diagnosis."""
+
+        seeds = state.get("mic_seed_vertices", {})
+        if not seeds or "mic_record" not in self._study_meshes:
+            return
+        mic_mesh = self._study_meshes["mic_record"]
+        coordinate_system = self._coordinate_system
+        if coordinate_system is None:
+            return
+        for arch in ("maxillary", "mandibular"):
+            if arch not in seeds:
+                continue
+            index = int(seeds[arch])
+            if index < 0 or index >= mic_mesh.vertex_count:
+                raise ValueError(f"Saved MIC {arch} seed is outside the mesh.")
+            self._mic_seed_vertices[arch] = index
+            local_point = coordinate_system.to_local(mic_mesh.vertices[index])
+            self.rc_mic_diagnosis_panel.show_seed(arch, index, local_point)
+        selected_points = {
+            arch: coordinate_system.to_local(mic_mesh.vertices[index])
+            for arch, index in self._mic_seed_vertices.items()
+        }
+        self.scene.show_mic_seeds(selected_points)
+        self.layer_actions["mic_seeds"].setEnabled(True)
+        self.layer_actions["mic_seeds"].setChecked(True)
+        if state.get("diagnosis_calculated"):
+            current_position = state.get("current_position")
+            self._diagnose_rc_mic()
+            self._apply_saved_position(current_position)
+
     def _new_study(self) -> None:
         """Clear the currently loaded study after user confirmation."""
 
-        if self._study_files is not None:
-            answer = QMessageBox.question(
-                self,
-                "Nuevo estudio",
-                "Se cerrará el estudio cargado. ¿Desea continuar?",
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        if not self._confirm_discard_changes("crear un estudio nuevo"):
+            return
 
         for layer_name in (
             "maxillary_rc",
@@ -564,8 +990,12 @@ class MainWindow(QMainWindow):
 
         self._study_files = None
         self._study_meshes.clear()
+        self._study_path = None
+        self._study_dirty = False
         self._clear_anatomical_state()
         self.orientation_panel.set_study_available(False)
+        self._set_study_actions_enabled(False)
+        self._update_window_title()
         self.scene.show_welcome()
         self.scene.plotter.render()
         self.statusBar().showMessage(
@@ -574,6 +1004,9 @@ class MainWindow(QMainWindow):
 
     def _import_study_files(self) -> None:
         """Select, read and display the files of an RC–MIC study."""
+
+        if not self._confirm_discard_changes("importar otro estudio"):
+            return
 
         dialog = StudyImportDialog(self)
         if dialog.exec() != StudyImportDialog.DialogCode.Accepted:
@@ -657,12 +1090,17 @@ class MainWindow(QMainWindow):
 
         self._study_files = selection
         self._study_meshes = meshes
-        self._reset_rc_mic_diagnosis()
+        self._reset_rc_mic_diagnosis(mark_dirty=False)
         self._clear_anatomical_state()
         self.orientation_panel.set_study_available(True)
         self._update_study_tree(selection, meshes)
         self.scene.finish_study_load()
         self.workflow_list.setCurrentRow(0)
+        self._set_study_actions_enabled(True)
+        if not self._restoring_study:
+            self._study_path = None
+            self._mark_study_dirty()
+        self._refresh_results_panel()
         self.statusBar().showMessage(
             f"Estudio cargado — {len(meshes)} archivos"
         )
@@ -721,17 +1159,21 @@ class MainWindow(QMainWindow):
         mounting_selected = row == 2
         calibration_selected = row == 3
         diagnosis_selected = row == 5
+        results_selected = row == 6
         self.orientation_panel.setVisible(orientation_selected)
         self.mounting_panel.setVisible(mounting_selected)
         self.functional_calibration_panel.setVisible(calibration_selected)
         self.functional_calibration_scroll.setVisible(calibration_selected)
         self.rc_mic_diagnosis_panel.setVisible(diagnosis_selected)
         self.rc_mic_diagnosis_scroll.setVisible(diagnosis_selected)
+        self.results_export_panel.setVisible(results_selected)
+        self.results_export_scroll.setVisible(results_selected)
         self.workflow_message.setVisible(
             not orientation_selected
             and not mounting_selected
             and not calibration_selected
             and not diagnosis_selected
+            and not results_selected
         )
 
         messages = {
@@ -747,10 +1189,13 @@ class MainWindow(QMainWindow):
             and not mounting_selected
             and not calibration_selected
             and not diagnosis_selected
+            and not results_selected
         ):
             self.workflow_message.setText(
                 messages.get(row, "Paso clínico en preparación.")
             )
+        if results_selected:
+            self._refresh_results_panel()
         if not orientation_selected:
             self._finish_landmark_pick()
 
@@ -834,6 +1279,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Punto guardado — puede seleccionarlo nuevamente para corregirlo"
         )
+        self._state_changed()
 
     def _finish_landmark_pick(self) -> None:
         """Leave picking mode and restore previous layer visibility."""
@@ -955,6 +1401,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Semilla del {name} MIC guardada — vértice {vertex_index:,}"
         )
+        self._state_changed()
 
     def _diagnose_rc_mic(self) -> None:
         """Separate the combined record and calculate RC-to-MIC displacement."""
@@ -1046,10 +1493,12 @@ class MainWindow(QMainWindow):
                 left_vector=left_vector,
             )
             self._update_rc_mic_tree(right_vector, left_vector)
+            self._set_rc_mic_diagnostic_view("overlay")
             self.scene.plotter.render()
             self.statusBar().showMessage(
                 "Diagnóstico RC–MIC calculado — vectores expresados en X/Y/Z"
             )
+            self._state_changed()
         except (TypeError, ValueError) as error:
             self.rc_mic_diagnosis_panel.show_error(str(error))
             self.statusBar().showMessage(
@@ -1063,7 +1512,23 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def _reset_rc_mic_diagnosis(self) -> None:
+    def _set_rc_mic_diagnostic_view(self, mode: str) -> None:
+        """Switch between RC, MIC, and their overlay without moving camera."""
+
+        if self._rc_mic_registration is None:
+            return
+        self.rc_mic_diagnosis_panel.set_diagnostic_view(mode)
+        self.scene.set_rc_mic_view(mode)
+        labels = {
+            "rc": "Relación céntrica",
+            "mic": "Máxima intercuspidación",
+            "overlay": "Superposición RC/MIC",
+        }
+        self.statusBar().showMessage(
+            f"Vista diagnóstica — {labels[mode]}"
+        )
+
+    def _reset_rc_mic_diagnosis(self, *, mark_dirty: bool = True) -> None:
         """Remove MIC seeds and computed diagnostic actors."""
 
         if hasattr(self, "scene"):
@@ -1089,6 +1554,8 @@ class MainWindow(QMainWindow):
             section.takeChildren()
         if hasattr(self, "scene"):
             self.scene.plotter.render()
+        if mark_dirty:
+            self._state_changed()
 
     def _update_rc_mic_tree(
         self,
@@ -1131,6 +1598,349 @@ class MainWindow(QMainWindow):
             f"X {vector[0]:+.4f} mm | "
             f"Y {vector[1]:+.4f} mm | "
             f"Z {vector[2]:+.4f} mm"
+        )
+
+    def _results_snapshot(self) -> StudyResultsSnapshot:
+        """Build one immutable view of every currently available result."""
+
+        mounting = None
+        configuration = self._articulator_configuration
+        if configuration is not None:
+            functional_path = 17.0
+            if self._condylar_guides is not None:
+                functional_path = min(
+                    self._condylar_guides.right_guide.maximum_translation,
+                    self._condylar_guides.left_guide.maximum_translation,
+                )
+            mounting = {
+                "intercondylar_width": configuration.intercondylar_width,
+                "balkwill_angle_degrees": (
+                    configuration.balkwill_angle_degrees
+                ),
+                "right_condylar_guidance_degrees": (
+                    configuration.right_condylar_guidance_degrees
+                ),
+                "left_condylar_guidance_degrees": (
+                    configuration.left_condylar_guidance_degrees
+                ),
+                "functional_path_mm": functional_path,
+            }
+
+        controller = self._functional_calibration_controller
+        limits: tuple[dict[str, Any], ...] = ()
+        if controller is not None:
+            limits = tuple(
+                {
+                    "kind": limit.kind.value,
+                    "base_opening_angle_degrees": (
+                        limit.base_opening_angle_degrees
+                    ),
+                    "adjustment_angle_degrees": (
+                        limit.adjustment_angle_degrees
+                    ),
+                    "total_opening_angle_degrees": (
+                        limit.total_opening_angle_degrees
+                    ),
+                    "lateral_angle_degrees": limit.lateral_angle_degrees,
+                    "protrusion_distance_mm": limit.protrusion_distance_mm,
+                }
+                for limit in controller.limits.values
+            )
+
+        diagnosis = None
+        registration = self._rc_mic_registration
+        displacement = self._condylar_displacement
+        coordinate_system = self._coordinate_system
+        if (
+            registration is not None
+            and displacement is not None
+            and coordinate_system is not None
+        ):
+            right_vector = (
+                coordinate_system.to_local(displacement.right_mic_point)
+                - coordinate_system.to_local(displacement.right_rc_point)
+            )
+            left_vector = (
+                coordinate_system.to_local(displacement.left_mic_point)
+                - coordinate_system.to_local(displacement.left_rc_point)
+            )
+            diagnosis = {
+                "converged": registration.converged,
+                "maxillary_rmse_mm": (
+                    registration.maxillary_registration.root_mean_square_error
+                ),
+                "mandibular_rmse_mm": (
+                    registration.mandibular_registration.root_mean_square_error
+                ),
+                "right_vector_mm": right_vector.tolist(),
+                "right_distance_mm": float(np.linalg.norm(right_vector)),
+                "left_vector_mm": left_vector.tolist(),
+                "left_distance_mm": float(np.linalg.norm(left_vector)),
+            }
+
+        return StudyResultsSnapshot(
+            study_name=self._study_display_name(),
+            source_files=self._study_filenames(),
+            mounting=mounting,
+            functional_limits=limits,
+            rc_mic=diagnosis,
+        )
+
+    def _refresh_results_panel(self) -> None:
+        """Synchronize point 7 with the complete current study state."""
+
+        if self._study_files is None:
+            self.results_export_panel.set_study_available(False)
+            return
+        self.results_export_panel.set_study_available(True)
+        self.results_export_panel.show_snapshot(self._results_snapshot())
+
+    def _suggested_output_path(self, suffix: str) -> Path:
+        """Return a stable default beside the native study when possible."""
+
+        directory = (
+            self._study_path.parent
+            if self._study_path is not None
+            else Path.cwd()
+        )
+        return directory / f"{self._study_display_name()}{suffix}"
+
+    def _export_results_pdf(self) -> None:
+        """Request and create one clinical PDF report."""
+
+        if self._study_files is None:
+            return
+        path_text, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar informe clínico",
+            str(self._suggested_output_path("_resultados.pdf")),
+            "Documentos PDF (*.pdf)",
+        )
+        if not path_text:
+            return
+        path = Path(path_text)
+        if path.suffix.lower() != ".pdf":
+            path = path.with_suffix(".pdf")
+        self._run_export(
+            lambda: self._create_pdf_report(path),
+            path,
+            "Informe PDF exportado",
+        )
+
+    def _create_pdf_report(self, path: Path) -> Path:
+        """Capture standardized clinical views and write the PDF report."""
+
+        with TemporaryDirectory(prefix="ogdd-report-") as directory:
+            captures = self._capture_report_visuals(Path(directory))
+            return ResultsExporter.export_pdf(
+                path,
+                self._results_snapshot(),
+                visual_captures=captures,
+            )
+
+    def _capture_report_visuals(
+        self,
+        directory: Path,
+    ) -> dict[str, Path | None]:
+        """Create six reproducible views while preserving interactive state."""
+
+        keys = (
+            "overlay_right",
+            "overlay_front",
+            "overlay_left",
+            "right_canine",
+            "protrusive",
+            "left_canine",
+        )
+        captures: dict[str, Path | None] = {key: None for key in keys}
+        controller = self._functional_calibration_controller
+        if controller is None or self._coordinate_system is None:
+            return captures
+
+        camera_state = self.scene.camera_state()
+        layer_state = {
+            name: action.isChecked()
+            for name, action in self.layer_actions.items()
+        }
+        position_state = (
+            controller.opening_angle_degrees,
+            controller.lateral_angle_degrees,
+            controller.protrusion_distance_mm,
+            controller.adjustment_angle_degrees,
+        )
+        previous_view = self.rc_mic_diagnosis_panel.diagnostic_view
+        previous_restoring = self._restoring_study
+        previous_dirty = self._study_dirty
+        self._restoring_study = True
+
+        try:
+            controller.reset_movement()
+            position = controller.reset_adjustment()
+            self._show_functional_position(position)
+            if self._rc_mic_registration is not None:
+                self._set_report_layers(
+                    {
+                        "maxillary_rc",
+                        "mandibular_rc",
+                        "mandibular_mic",
+                        "virtual_condyles",
+                        "hinge_axis",
+                        "condylar_displacement",
+                    }
+                )
+                self.scene.set_rc_mic_view("overlay", render=False)
+                for key, view in (
+                    ("overlay_right", "right"),
+                    ("overlay_front", "front"),
+                    ("overlay_left", "left"),
+                ):
+                    captures[key] = self._capture_report_view(
+                        directory,
+                        key,
+                        view,
+                    )
+
+            self._set_report_layers({"maxillary_rc", "mandibular_rc"})
+            for key, kind, view in (
+                (
+                    "right_canine",
+                    FunctionalLimitKind.RIGHT_CANINE_CUSP_TO_CUSP,
+                    "right",
+                ),
+                (
+                    "protrusive",
+                    FunctionalLimitKind.PROTRUSIVE_EDGE_TO_EDGE,
+                    "front",
+                ),
+                (
+                    "left_canine",
+                    FunctionalLimitKind.LEFT_CANINE_CUSP_TO_CUSP,
+                    "left",
+                ),
+            ):
+                if controller.limits.get(kind) is None:
+                    continue
+                position = controller.go_to_limit(kind)
+                self._show_functional_position(position)
+                self._set_report_layers({"maxillary_rc", "mandibular_rc"})
+                captures[key] = self._capture_report_view(
+                    directory,
+                    key,
+                    view,
+                )
+        finally:
+            controller.reset_movement()
+            controller.reset_adjustment()
+            restored = controller.set_position(
+                opening_angle_degrees=position_state[0],
+                lateral_angle_degrees=position_state[1],
+                protrusion_distance_mm=position_state[2],
+            )
+            restored = controller.set_adjustment(position_state[3])
+            self._show_functional_position(restored)
+            for name, visible in layer_state.items():
+                self.scene.set_layer_visible(name, visible, render=False)
+            if self._rc_mic_registration is not None:
+                self.rc_mic_diagnosis_panel.set_diagnostic_view(previous_view)
+                self.scene.set_rc_mic_view(previous_view, render=False)
+            self.scene.restore_camera_state(camera_state)
+            self._restoring_study = previous_restoring
+            self._study_dirty = previous_dirty
+            self._update_window_title()
+            self._refresh_results_panel()
+        return captures
+
+    def _set_report_layers(self, visible_layers: set[str]) -> None:
+        """Prepare a clean scene without changing the layer menu state."""
+
+        for name in self.layer_actions:
+            self.scene.set_layer_visible(
+                name,
+                name in visible_layers,
+                render=False,
+            )
+
+    def _capture_report_view(
+        self,
+        directory: Path,
+        key: str,
+        anatomical_view: str,
+    ) -> Path:
+        """Frame and save one standardized clinical screenshot."""
+
+        path = directory / f"{key}.png"
+        self.scene.set_anatomical_view(anatomical_view)
+        self.scene.save_screenshot(str(path))
+        return path
+
+    def _export_results_csv(self) -> None:
+        """Request and create one long-form numeric CSV export."""
+
+        if self._study_files is None:
+            return
+        path_text, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar datos clínicos",
+            str(self._suggested_output_path("_resultados.csv")),
+            "Datos CSV (*.csv)",
+        )
+        if not path_text:
+            return
+        path = Path(path_text)
+        if path.suffix.lower() != ".csv":
+            path = path.with_suffix(".csv")
+        self._run_export(
+            lambda: ResultsExporter.export_csv(path, self._results_snapshot()),
+            path,
+            "Datos CSV exportados",
+        )
+
+    def _export_scene_png(self) -> None:
+        """Request and save the current 3D scene as a PNG image."""
+
+        if self._study_files is None:
+            return
+        path_text, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar captura de la escena",
+            str(self._suggested_output_path("_escena.png")),
+            "Imágenes PNG (*.png)",
+        )
+        if not path_text:
+            return
+        path = Path(path_text)
+        if path.suffix.lower() != ".png":
+            path = path.with_suffix(".png")
+        self._run_export(
+            lambda: self.scene.save_screenshot(str(path)),
+            path,
+            "Captura PNG guardada",
+        )
+
+    def _run_export(
+        self,
+        action: Callable[[], Any],
+        path: Path,
+        success_message: str,
+    ) -> None:
+        """Run one explicit export with consistent feedback and protection."""
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            action()
+        except Exception as error:
+            QMessageBox.critical(
+                self,
+                "No fue posible exportar",
+                f"{type(error).__name__}: {error}",
+            )
+            self.statusBar().showMessage("La exportación no fue creada.")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.statusBar().showMessage(
+            f"{success_message} — {path.name}"
         )
 
     def _set_layer_visibility(
@@ -1229,8 +2039,10 @@ class MainWindow(QMainWindow):
         self._update_anatomical_tree(coordinate_system)
         self.scene.reset_camera()
         self.statusBar().showMessage(
-            "Orientación anatómica confirmada — +X derecha, +Y anterior, +Z superior"
+            "Orientación anatómica confirmada — "
+            "+X derecha, +Y anterior, +Z superior"
         )
+        self._state_changed()
 
     def _reset_orientation(self) -> None:
         """Discard landmarks and return meshes to scanner coordinates."""
@@ -1246,6 +2058,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Orientación restablecida — coordenadas originales del escáner"
         )
+        self._state_changed()
 
     def _clear_anatomical_state(self) -> None:
         """Clear anatomical state, actors and study-tree entries."""
@@ -1471,7 +2284,7 @@ class MainWindow(QMainWindow):
         self._hinge_axis = None
         self._condylar_guides = None
         self._functional_calibration_controller = None
-        self._reset_rc_mic_diagnosis()
+        self._reset_rc_mic_diagnosis(mark_dirty=False)
         for layer_name in (
             "bonwill",
             "virtual_condyles",
@@ -1499,6 +2312,7 @@ class MainWindow(QMainWindow):
         if section is not None:
             section.takeChildren()
         self.scene.plotter.render()
+        self._state_changed()
 
     def _open_mandible(self) -> None:
         """Open the mounted mandible by one validated hinge step."""
@@ -1916,6 +2730,7 @@ class MainWindow(QMainWindow):
                 left_canine_limit=controller.limits.left_canine,
             )
         self.scene.plotter.render()
+        self._state_changed()
 
     def _update_articulator_tree(self) -> None:
         """Describe the active virtual mounting in the study tree."""
@@ -1963,5 +2778,8 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._confirm_discard_changes("cerrar OGDD"):
+            event.ignore()
+            return
         self.scene.close_scene()
         super().closeEvent(event)

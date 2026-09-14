@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -21,6 +22,9 @@ class RcMicDiagnosisPanel(QWidget):
     select_mandibular_seed_requested = Signal()
     diagnose_requested = Signal()
     reset_requested = Signal()
+    view_rc_requested = Signal()
+    view_mic_requested = Signal()
+    view_overlay_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -126,6 +130,45 @@ class RcMicDiagnosisPanel(QWidget):
         results_form.addRow("Cóndilo izquierdo", self.left_distance_value)
         results_form.addRow("Vector izquierdo", self.left_vector_value)
 
+        comparison_title = QLabel("Comparación visual RC–MIC")
+        comparison_title.setStyleSheet(
+            "font-weight: 600; color: #315b5f; margin-top: 6px;"
+        )
+        comparison_help = QLabel(
+            "Cambie entre ambas posiciones sin modificar el montaje ni "
+            "la cámara actual."
+        )
+        comparison_help.setWordWrap(True)
+
+        self.view_rc_button = QPushButton("Mostrar RC")
+        self.view_mic_button = QPushButton("Mostrar MIC")
+        self.view_overlay_button = QPushButton("Superponer RC/MIC")
+        self.view_group = QButtonGroup(self)
+        self.view_group.setExclusive(True)
+        for button in (
+            self.view_rc_button,
+            self.view_mic_button,
+            self.view_overlay_button,
+        ):
+            button.setCheckable(True)
+            self.view_group.addButton(button)
+        self.view_overlay_button.setChecked(True)
+        self.view_rc_button.clicked.connect(
+            lambda checked=False: self.view_rc_requested.emit()
+        )
+        self.view_mic_button.clicked.connect(
+            lambda checked=False: self.view_mic_requested.emit()
+        )
+        self.view_overlay_button.clicked.connect(
+            lambda checked=False: self.view_overlay_requested.emit()
+        )
+
+        comparison_buttons = QVBoxLayout()
+        comparison_buttons.setSpacing(7)
+        comparison_buttons.addWidget(self.view_rc_button)
+        comparison_buttons.addWidget(self.view_mic_button)
+        comparison_buttons.addWidget(self.view_overlay_button)
+
         self.state_label = QLabel(
             "El diagnóstico permanecerá protegido hasta confirmar "
             "sus referencias."
@@ -144,6 +187,9 @@ class RcMicDiagnosisPanel(QWidget):
         layout.addLayout(action_buttons)
         layout.addWidget(results_title)
         layout.addLayout(results_form)
+        layout.addWidget(comparison_title)
+        layout.addWidget(comparison_help)
+        layout.addLayout(comparison_buttons)
         layout.addWidget(self.state_label)
         layout.addStretch()
 
@@ -259,6 +305,7 @@ class RcMicDiagnosisPanel(QWidget):
             "+X derecha, +Y anterior, +Z superior."
         )
         self._set_state_style(ready=registration.converged)
+        self.view_overlay_button.setChecked(True)
         self._update_controls()
 
     def show_error(self, message: str) -> None:
@@ -298,6 +345,29 @@ class RcMicDiagnosisPanel(QWidget):
         self.left_distance_value.setText("—")
         self.left_vector_value.setText("X —  |  Y —  |  Z —")
 
+    @property
+    def diagnostic_view(self) -> str:
+        """Return the operator-selected comparison mode."""
+
+        if self.view_rc_button.isChecked():
+            return "rc"
+        if self.view_mic_button.isChecked():
+            return "mic"
+        return "overlay"
+
+    def set_diagnostic_view(self, mode: str) -> None:
+        """Synchronize the selected comparison button without emitting."""
+
+        buttons = {
+            "rc": self.view_rc_button,
+            "mic": self.view_mic_button,
+            "overlay": self.view_overlay_button,
+        }
+        try:
+            buttons[mode].setChecked(True)
+        except KeyError as error:
+            raise ValueError("Diagnostic view must be RC, MIC, or overlay.") from error
+
     @staticmethod
     def _format_vector(vector: np.ndarray) -> str:
         return (
@@ -311,6 +381,10 @@ class RcMicDiagnosisPanel(QWidget):
         self.maxillary_seed_button.setEnabled(ready)
         self.mandibular_seed_button.setEnabled(ready)
         self.diagnose_button.setEnabled(ready and self.seeds_complete)
+        result_available = self.convergence_value.text() != "Pendiente"
+        self.view_rc_button.setEnabled(result_available)
+        self.view_mic_button.setEnabled(result_available)
+        self.view_overlay_button.setEnabled(result_available)
         self.reset_button.setEnabled(
             ready
             and (

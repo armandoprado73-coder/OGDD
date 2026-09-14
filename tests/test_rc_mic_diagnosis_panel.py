@@ -50,6 +50,9 @@ def test_panel_starts_protected(qt_application) -> None:
     assert not panel.mandibular_seed_button.isEnabled()
     assert not panel.diagnose_button.isEnabled()
     assert not panel.reset_button.isEnabled()
+    assert not panel.view_rc_button.isEnabled()
+    assert not panel.view_mic_button.isEnabled()
+    assert not panel.view_overlay_button.isEnabled()
 
 
 def test_record_alone_does_not_unlock_diagnosis(qt_application) -> None:
@@ -141,6 +144,36 @@ def test_panel_reports_registration_and_local_vectors(qt_application) -> None:
     assert "+X derecha" in panel.state_label.text()
     assert "+Y anterior" in panel.state_label.text()
     assert "+Z superior" in panel.state_label.text()
+    assert panel.view_rc_button.isEnabled()
+    assert panel.view_mic_button.isEnabled()
+    assert panel.view_overlay_button.isEnabled()
+    assert panel.diagnostic_view == "overlay"
+
+
+def test_comparison_buttons_emit_exclusive_view_requests(qt_application) -> None:
+    panel = RcMicDiagnosisPanel()
+    panel.set_prerequisites(mic_available=True, mounting_available=True)
+    panel.show_seed("maxillary", 1, [0.0, 0.0, 1.0])
+    panel.show_seed("mandibular", 2, [0.0, 0.0, -1.0])
+    panel.show_result(
+        registration=registration_result(),
+        right_vector=np.ones(3),
+        left_vector=-np.ones(3),
+    )
+    rc_spy = QSignalSpy(panel.view_rc_requested)
+    mic_spy = QSignalSpy(panel.view_mic_requested)
+    overlay_spy = QSignalSpy(panel.view_overlay_requested)
+
+    panel.view_rc_button.click()
+    assert panel.diagnostic_view == "rc"
+    panel.view_mic_button.click()
+    assert panel.diagnostic_view == "mic"
+    panel.view_overlay_button.click()
+    assert panel.diagnostic_view == "overlay"
+
+    assert rc_spy.count() == 1
+    assert mic_spy.count() == 1
+    assert overlay_spy.count() == 1
 
 
 def test_reset_discards_seeds_and_results(qt_application) -> None:

@@ -140,6 +140,30 @@ class MountingPanel(QWidget):
             left_condylar_guidance_degrees=self.left_guidance.value(),
         )
 
+    def set_configuration(
+        self,
+        configuration: ArticulatorConfiguration,
+    ) -> None:
+        """Restore one saved articulator configuration into the controls."""
+
+        preset_index = self.preset_combo.findData(
+            configuration.intercondylar_width
+        )
+        if preset_index < 0:
+            raise ValueError(
+                "Saved intercondylar width is not an available preset."
+            )
+        self.preset_combo.setCurrentIndex(preset_index)
+        self.balkwill_angle.setValue(
+            configuration.balkwill_angle_degrees
+        )
+        self.right_guidance.setValue(
+            configuration.right_condylar_guidance_degrees
+        )
+        self.left_guidance.setValue(
+            configuration.left_condylar_guidance_degrees
+        )
+
     def set_orientation_available(self, available: bool) -> None:
         """Enable mounting only after anatomical orientation."""
 

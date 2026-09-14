@@ -34,6 +34,7 @@ class SceneView(QFrame):
 
         self._layer_actors: dict[str, list[Any]] = defaultdict(list)
         self._layer_surfaces: dict[str, pv.PolyData] = {}
+        self._rc_mic_actor_groups: dict[str, list[Any]] = defaultdict(list)
         self._surface_pick_enabled = False
         self._prepare_empty_scene()
 
@@ -121,6 +122,8 @@ class SceneView(QFrame):
 
         for actor in self._layer_actors.pop(layer_name, []):
             self.plotter.remove_actor(actor, render=False)
+        if layer_name == "condylar_displacement":
+            self._rc_mic_actor_groups.clear()
         self._layer_surfaces.pop(layer_name, None)
         if render:
             self.plotter.render()
@@ -528,6 +531,8 @@ class SceneView(QFrame):
         )
         self.register_actor("condylar_displacement", rc_hinge_actor)
         self.register_actor("condylar_displacement", mic_hinge_actor)
+        self._rc_mic_actor_groups["rc"].append(rc_hinge_actor)
+        self._rc_mic_actor_groups["mic"].append(mic_hinge_actor)
 
         for side, rc_point, mic_point, color in (
             ("right", right_rc, right_mic, "deepskyblue"),
@@ -548,6 +553,7 @@ class SceneView(QFrame):
                 reset_camera=False,
             )
             self.register_actor("condylar_displacement", condyle_actor)
+            self._rc_mic_actor_groups["mic"].append(condyle_actor)
 
             vector = mic_point - rc_point
             distance = float(np.linalg.norm(vector))
@@ -568,6 +574,7 @@ class SceneView(QFrame):
                 reset_camera=False,
             )
             self.register_actor("condylar_displacement", arrow_actor)
+            self._rc_mic_actor_groups["vectors"].append(arrow_actor)
 
         labels_actor = self.plotter.add_point_labels(
             np.asarray([right_rc, left_rc, right_mic, left_mic]),
@@ -580,7 +587,44 @@ class SceneView(QFrame):
             name="rc_mic_condyle_labels",
         )
         self.register_actor("condylar_displacement", labels_actor)
+        self._rc_mic_actor_groups["vectors"].append(labels_actor)
         self.plotter.render()
+
+    def set_rc_mic_view(self, mode: str, *, render: bool = True) -> None:
+        """Show RC, MIC, or their diagnostic overlay in the same camera."""
+
+        if mode not in {"rc", "mic", "overlay"}:
+            raise ValueError("Diagnostic view must be RC, MIC, or overlay.")
+        visibility = {
+            "rc": {"rc": True, "mic": False, "vectors": False},
+            "mic": {"rc": False, "mic": True, "vectors": False},
+            "overlay": {"rc": True, "mic": True, "vectors": True},
+        }[mode]
+        self.set_layer_visible(
+            "mandibular_rc",
+            mode in {"rc", "overlay"},
+            render=False,
+        )
+        self.set_layer_visible(
+            "mandibular_mic",
+            mode in {"mic", "overlay"},
+            render=False,
+        )
+        self.set_layer_visible(
+            "virtual_condyles",
+            mode in {"rc", "overlay"},
+            render=False,
+        )
+        self.set_layer_visible(
+            "hinge_axis",
+            mode in {"rc", "overlay"},
+            render=False,
+        )
+        for group, actors in self._rc_mic_actor_groups.items():
+            for actor in actors:
+                actor.SetVisibility(visibility[group])
+        if render:
+            self.plotter.render()
 
     def finish_study_load(self) -> None:
         """Frame newly loaded models and remove the welcome message."""
@@ -616,6 +660,37 @@ class SceneView(QFrame):
         self.plotter.view_isometric()
         self.plotter.reset_camera()
         self.plotter.render()
+
+    def camera_state(self) -> tuple[tuple[float, ...], ...]:
+        """Return a portable copy of the current camera position."""
+
+        return tuple(
+            tuple(float(value) for value in vector)
+            for vector in self.plotter.camera_position
+        )
+
+    def restore_camera_state(
+        self,
+        state: tuple[tuple[float, ...], ...],
+    ) -> None:
+        """Restore one camera without reframing the scene."""
+
+        self.plotter.camera_position = state
+        self.plotter.render()
+
+    def save_screenshot(
+        self,
+        path: str,
+        *,
+        window_size: tuple[int, int] | None = None,
+    ) -> None:
+        """Save the current 3D scene at the active window resolution."""
+
+        self.plotter.screenshot(
+            path,
+            return_img=False,
+            window_size=window_size,
+        )
 
     def close_scene(self) -> None:
         """Release VTK resources before closing the Qt window."""
