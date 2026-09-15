@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OGDD
+GenericName=Digital Dentistry Geometry
+Comment=Open Geometry for Digital Dentistry
+Exec=@OGDD_EXECUTABLE@
+TryExec=@OGDD_EXECUTABLE@
+Terminal=false
+Categories=Education;Science;MedicalSoftware;
+StartupNotify=true

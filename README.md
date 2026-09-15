@@ -113,11 +113,53 @@ Current objectives:
 
 # Installation
 
-Development installation:
+## Native installers
+
+Release builds do not require Python. Download the installer for your platform
+from the GitHub release or from the artifacts produced by the **Build
+installers** workflow.
+
+### Windows 10/11 (64-bit)
+
+Run `OGDD-<version>-Windows-x64-Setup.exe`. OGDD is installed for the current
+user, appears in the Start menu and includes an uninstaller. Administrator
+access is not required.
+
+### Linux (64-bit)
+
+Make the downloaded installer executable and run it:
+
+```bash
+chmod +x OGDD-<version>-Linux-x86_64.run
+./OGDD-<version>-Linux-x86_64.run
+```
+
+OGDD is installed for the current user and appears in the desktop application
+menu. It can be removed with:
+
+```bash
+~/.local/share/ogdd/uninstall-ogdd.sh
+```
+
+## Development installation
 
 ```bash
 git clone https://github.com/armandoprado73-coder/OGDD.git
-
 cd OGDD
+python -m pip install -e ".[gui]"
+ogdd
+```
 
-pip install -e .
+## Building an installer
+
+Install the packaging dependencies and build on the target operating system:
+
+```bash
+python -m pip install ".[gui,build]"
+python tools/build_installer.py
+```
+
+Windows builds also require Inno Setup 6. Generated installers are written to
+`dist/installers/` with a SHA-256 checksum. The GitHub Actions workflow builds
+and checks both systems independently whenever it is started manually or a
+`v*` tag is pushed.

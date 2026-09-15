@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from .main_window import MainWindow
@@ -56,11 +57,16 @@ QStatusBar {
 }
 """
 
+STARTUP_CHECK_DELAY_MILLISECONDS = 750
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Create and run the OGDD desktop application."""
 
     arguments = list(sys.argv if argv is None else argv)
+    check_startup = "--check-startup" in arguments
+    if check_startup:
+        arguments.remove("--check-startup")
     application = QApplication(arguments)
     application.setApplicationName("OGDD")
     application.setOrganizationName("OGDD")
@@ -72,5 +78,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     window = MainWindow()
     window.show()
+
+    # Packaging jobs use this private flag to prove that the frozen
+    # application can construct its complete Qt/VTK interface.  The timer
+    # leaves the normal interactive startup path unchanged.
+    if check_startup:
+        QTimer.singleShot(STARTUP_CHECK_DELAY_MILLISECONDS, window.close)
 
     return application.exec()

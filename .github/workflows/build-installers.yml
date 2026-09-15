@@ -1,0 +1,73 @@
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows installer
+            os: windows-2022
+            artifact: windows
+          - name: Linux installer
+            os: ubuntu-22.04
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out OGDD
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Linux runtime checks
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libgl1 libxcb-cursor0 xauth xvfb
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Install OGDD and packaging tools
+        run: python -m pip install ".[gui,build]"
+
+      - name: Run tests
+        run: python -m pip install pytest pytest-qt && python -m pytest -q
+
+      - name: Build native installer
+        run: python tools/build_installer.py
+
+      - name: Check frozen Windows application startup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process "dist/pyinstaller/OGDD/OGDD.exe" -ArgumentList "--check-startup" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+
+      - name: Check frozen Linux application startup
+        if: runner.os == 'Linux'
+        run: xvfb-run -a dist/pyinstaller/OGDD/OGDD --check-startup
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ogdd-${{ matrix.artifact }}-installer
+          path: dist/installers/*
+          if-no-files-found: error
