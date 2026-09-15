@@ -53,6 +53,20 @@ def test_windows_installer_is_per_user_and_includes_uninstaller() -> None:
     assert "UninstallDisplayIcon={app}\\OGDD.exe" in inno_setup
 
 
+def test_workflow_preserves_windows_installer_and_startup_diagnostics() -> None:
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "build-installers.yml"
+    ).read_text(encoding="utf-8")
+    entry_point = (
+        PROJECT_ROOT / "src" / "ogdd" / "app" / "__main__.py"
+    ).read_text(encoding="utf-8")
+
+    assert "if: ${{ !cancelled() }}" in workflow
+    assert "Upload Windows startup diagnostics" in workflow
+    assert "ogdd-startup-error.log" in workflow
+    assert "ogdd-startup-error.log" in entry_point
+
+
 def test_checksum_uses_installer_filename(tmp_path: Path) -> None:
     module_path = PROJECT_ROOT / "tools" / "build_installer.py"
     spec = importlib.util.spec_from_file_location("ogdd_installer_builder", module_path)

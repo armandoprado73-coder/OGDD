@@ -71,13 +71,30 @@ jobs:
         shell: pwsh
         run: |
           $process = Start-Process "dist/pyinstaller/OGDD/OGDD.exe" -ArgumentList "--check-startup" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+          if ($process.ExitCode -ne 0) {
+            Write-Host "OGDD startup check exited with code $($process.ExitCode)."
+            if (Test-Path "ogdd-startup-error.log") {
+              Get-Content "ogdd-startup-error.log"
+            } else {
+              Write-Host "No Python startup diagnostic was produced."
+            }
+            exit $process.ExitCode
+          }
 
       - name: Check frozen Linux application startup
         if: runner.os == 'Linux'
         run: xvfb-run -a dist/pyinstaller/OGDD/OGDD --check-startup
 
+      - name: Upload Windows startup diagnostics
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ogdd-windows-startup-diagnostics
+          path: ogdd-startup-error.log
+          if-no-files-found: warn
+
       - name: Upload installer
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: ogdd-${{ matrix.artifact }}-installer
