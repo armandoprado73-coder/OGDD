@@ -31,6 +31,7 @@ class RcMicDiagnosisPanel(QWidget):
 
         self._mic_available = False
         self._mounting_available = False
+        self._rc_reference_confirmed = True
         self._maxillary_seed_vertex: int | None = None
         self._mandibular_seed_vertex: int | None = None
 
@@ -209,12 +210,14 @@ class RcMicDiagnosisPanel(QWidget):
         *,
         mic_available: bool,
         mounting_available: bool,
+        rc_reference_confirmed: bool = True,
     ) -> None:
-        """Protect diagnosis until both the record and RC mount exist."""
+        """Protect diagnosis until the record and clinical RC both exist."""
 
         self._mic_available = bool(mic_available)
         self._mounting_available = bool(mounting_available)
-        ready = self._mic_available and self._mounting_available
+        self._rc_reference_confirmed = bool(rc_reference_confirmed)
+        ready = self._prerequisites_ready
         self.availability_label.setVisible(not ready)
         if not self._mic_available:
             self.availability_label.setText(
@@ -224,6 +227,10 @@ class RcMicDiagnosisPanel(QWidget):
             self.availability_label.setText(
                 "Construya primero el montaje virtual en RC."
             )
+        elif not self._rc_reference_confirmed:
+            self.availability_label.setText(
+                "Confirme primero el contacto inicial de la RC clínica."
+            )
         else:
             self.state_label.setText(
                 "Seleccione manualmente una semilla sobre cada arcada MIC."
@@ -232,6 +239,16 @@ class RcMicDiagnosisPanel(QWidget):
         if not ready:
             self.clear()
         self._update_controls()
+
+    @property
+    def _prerequisites_ready(self) -> bool:
+        """Whether MIC, mounting, and the clinical RC reference are ready."""
+
+        return (
+            self._mic_available
+            and self._mounting_available
+            and self._rc_reference_confirmed
+        )
 
     def show_seed(
         self,
@@ -324,7 +341,7 @@ class RcMicDiagnosisPanel(QWidget):
         self.maxillary_seed_value.setText("Pendiente")
         self.mandibular_seed_value.setText("Pendiente")
         self._clear_results()
-        if self._mic_available and self._mounting_available:
+        if self._prerequisites_ready:
             self.state_label.setText(
                 "Seleccione manualmente una semilla sobre cada arcada MIC."
             )
@@ -377,7 +394,7 @@ class RcMicDiagnosisPanel(QWidget):
         )
 
     def _update_controls(self) -> None:
-        ready = self._mic_available and self._mounting_available
+        ready = self._prerequisites_ready
         self.maxillary_seed_button.setEnabled(ready)
         self.mandibular_seed_button.setEnabled(ready)
         self.diagnose_button.setEnabled(ready and self.seeds_complete)

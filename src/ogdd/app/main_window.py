@@ -277,6 +277,9 @@ class MainWindow(QMainWindow):
         self.functional_calibration_panel.clear_limits_requested.connect(
             self._clear_functional_limits
         )
+        self.functional_calibration_panel.confirm_rc_requested.connect(
+            self._confirm_clinical_rc
+        )
         self.functional_calibration_panel.rc_requested.connect(
             self._return_to_rc
         )
@@ -708,6 +711,15 @@ class MainWindow(QMainWindow):
                 "adjustment_angle_degrees": controller.adjustment_angle_degrees,
             }
 
+        centric_relation = None
+        if controller is not None:
+            centric_relation = {
+                "confirmed": controller.centric_relation_confirmed,
+                "opening_angle_degrees": (
+                    controller.centric_relation_opening_angle_degrees
+                ),
+            }
+
         return {
             "landmarks": {
                 name: point.tolist()
@@ -715,6 +727,7 @@ class MainWindow(QMainWindow):
             },
             "mounting": mounting,
             "functional_limits": limits,
+            "centric_relation": centric_relation,
             "current_position": position,
             "mic_seed_vertices": dict(self._mic_seed_vertices),
             "diagnosis_calculated": self._rc_mic_registration is not None,
@@ -893,6 +906,29 @@ class MainWindow(QMainWindow):
         if controller is None:
             return
         controller.clear_limits()
+        saved_rc = state.get("centric_relation")
+        if saved_rc is None:
+            # Archives created before clinical-RC calibration used the
+            # imported zero position as their confirmed reference.
+            controller.confirm_current_as_centric_relation()
+        elif saved_rc.get("confirmed", False):
+            controller.set_opening(
+                saved_rc.get("opening_angle_degrees", 0.0)
+            )
+            controller.confirm_current_as_centric_relation()
+        self.functional_calibration_panel.show_rc_reference(
+            confirmed=controller.centric_relation_confirmed,
+            opening_angle_degrees=(
+                controller.centric_relation_opening_angle_degrees
+            ),
+        )
+        self.rc_mic_diagnosis_panel.set_prerequisites(
+            mic_available="mic_record" in self._study_meshes,
+            mounting_available=True,
+            rc_reference_confirmed=(
+                controller.centric_relation_confirmed
+            ),
+        )
         save_actions = {
             FunctionalLimitKind.PROTRUSIVE_EDGE_TO_EDGE.value: (
                 controller.save_protrusive_limit
@@ -1417,6 +1453,11 @@ class MainWindow(QMainWindow):
             return
 
         controller = self._functional_calibration_controller
+        if controller is None or not controller.centric_relation_confirmed:
+            self.rc_mic_diagnosis_panel.show_error(
+                "confirme primero el contacto inicial de la RC clínica."
+            )
+            return
         if controller is not None:
             controller.reset_movement()
             position = controller.reset_adjustment()
@@ -1438,7 +1479,7 @@ class MainWindow(QMainWindow):
             )
             registration = CentricRelationRegistration.register(
                 maxillary_mesh=self._study_meshes["maxillary_rc"],
-                mandibular_rc_mesh=self._study_meshes["mandibular_rc"],
+                mandibular_rc_mesh=position.mesh,
                 mic_record=mic_record,
                 maximum_iterations=50,
                 tolerance=1e-6,
@@ -1465,7 +1506,7 @@ class MainWindow(QMainWindow):
             )
             mandibular_mic_points = (
                 registration.mandibular_rc_to_mic_transform.apply(
-                    self._study_meshes["mandibular_rc"].vertices
+                    position.mesh.vertices
                 )
             )
 
@@ -2202,6 +2243,7 @@ class MainWindow(QMainWindow):
         functional_controller = FunctionalCalibrationController(
             combined=combined_controller,
             closure=closure_controller,
+            centric_relation_confirmed=False,
         )
 
         self._articulator_configuration = configuration
@@ -2254,16 +2296,19 @@ class MainWindow(QMainWindow):
                 functional_controller
                 .maximum_left_lateral_angle_degrees
             ),
+            rc_confirmed=False,
+            rc_opening_angle_degrees=0.0,
         )
         self._show_functional_position(functional_controller.position)
         self.rc_mic_diagnosis_panel.set_prerequisites(
             mic_available="mic_record" in self._study_meshes,
             mounting_available=True,
+            rc_reference_confirmed=False,
         )
         self._update_articulator_tree()
         self.scene.reset_camera()
         self.statusBar().showMessage(
-            "Montaje en RC construido — Bonwill, eje y guías confirmados"
+            "Montaje construido — calibre y confirme el contacto inicial RC"
         )
 
     def _clear_mounting_state(self) -> None:
@@ -2647,6 +2692,39 @@ class MainWindow(QMainWindow):
             value = "0.0°"
         return f"Lateralidad mandibular — {value}"
 
+    def _confirm_clinical_rc(self) -> None:
+        """Lock the operator-selected initial contact as clinical RC."""
+
+        controller = self._functional_calibration_controller
+        if controller is None:
+            return
+        try:
+            position = controller.confirm_current_as_centric_relation()
+        except ValueError as error:
+            self.statusBar().showMessage(
+                f"RC clínica no confirmada — {error}"
+            )
+            return
+
+        self._reset_rc_mic_diagnosis(mark_dirty=False)
+        self._show_functional_position(position)
+        self.functional_calibration_panel.show_rc_reference(
+            confirmed=True,
+            opening_angle_degrees=(
+                controller.centric_relation_opening_angle_degrees
+            ),
+        )
+        self.rc_mic_diagnosis_panel.set_prerequisites(
+            mic_available="mic_record" in self._study_meshes,
+            mounting_available=True,
+            rc_reference_confirmed=True,
+        )
+        self.statusBar().showMessage(
+            "RC clínica confirmada — contacto inicial bloqueado en "
+            f"{controller.centric_relation_opening_angle_degrees:.1f}°"
+        )
+        self._state_changed()
+
     def _return_to_rc(self) -> None:
         """Return every calibrated movement component exactly to RC."""
 
@@ -2656,7 +2734,10 @@ class MainWindow(QMainWindow):
         controller.reset_movement()
         position = controller.reset_adjustment()
         self._show_functional_position(position)
-        self.statusBar().showMessage("Mandíbula en relación céntrica — 0.0°")
+        self.statusBar().showMessage(
+            "Mandíbula en relación céntrica clínica — "
+            f"{controller.centric_relation_opening_angle_degrees:.1f}°"
+        )
 
     def _show_functional_position(self, position) -> None:
         """Display one absolute mandibular position without moving the maxilla."""

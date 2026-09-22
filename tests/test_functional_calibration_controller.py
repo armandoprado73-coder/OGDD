@@ -177,6 +177,64 @@ def save_left_at(
     controller.save_left_canine_limit()
 
 
+def test_operator_can_lock_hinge_opening_as_clinical_rc(
+    combined: MagicMock,
+    closure: MagicMock,
+) -> None:
+    controller = FunctionalCalibrationController(
+        combined=combined,
+        closure=closure,
+        centric_relation_confirmed=False,
+    )
+
+    controller.set_opening(0.6)
+    position = controller.confirm_current_as_centric_relation()
+
+    assert position is controller.position
+    assert controller.centric_relation_confirmed
+    assert controller.centric_relation_opening_angle_degrees == 0.6
+    assert controller.minimum_opening_angle_degrees == 0.6
+    assert controller.is_at_centric_relation
+
+
+def test_confirmed_clinical_rc_is_the_closing_limit_and_reset_origin(
+    combined: MagicMock,
+    closure: MagicMock,
+) -> None:
+    controller = FunctionalCalibrationController(
+        combined=combined,
+        closure=closure,
+        centric_relation_confirmed=False,
+    )
+    controller.set_opening(0.6)
+    controller.confirm_current_as_centric_relation()
+
+    controller.close_mandible()
+    assert controller.opening_angle_degrees == 0.6
+
+    with pytest.raises(ValueError, match="confirmed clinical"):
+        controller.set_opening(0.5)
+
+    controller.set_opening(2.0)
+    controller.reset_movement()
+    assert controller.opening_angle_degrees == 0.6
+    assert controller.is_at_centric_relation
+
+
+def test_unconfirmed_rc_protects_functional_excursions(
+    combined: MagicMock,
+    closure: MagicMock,
+) -> None:
+    controller = FunctionalCalibrationController(
+        combined=combined,
+        closure=closure,
+        centric_relation_confirmed=False,
+    )
+
+    with pytest.raises(ValueError, match="Confirm the clinical"):
+        controller.set_protrusion(1.0)
+
+
 def test_initialization_synchronizes_base(
     combined: MagicMock,
     closure: MagicMock,

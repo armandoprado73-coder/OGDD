@@ -48,6 +48,14 @@ class FunctionalCalibrationController:
         default_factory=FunctionalLimits,
     )
 
+    centric_relation_confirmed: bool = True
+
+    _centric_relation_opening_angle_degrees: float = field(
+        default=0.0,
+        init=False,
+        repr=False,
+    )
+
     def __post_init__(self) -> None:
         """
         Synchronize closure with the current combined base.
@@ -64,6 +72,20 @@ class FunctionalCalibrationController:
         """
 
         return self.combined.opening_angle_degrees
+
+    @property
+    def centric_relation_opening_angle_degrees(self) -> float:
+        """Absolute hinge opening saved as the clinical RC reference."""
+
+        return self._centric_relation_opening_angle_degrees
+
+    @property
+    def minimum_opening_angle_degrees(self) -> float:
+        """Lowest safe opening after the operator confirms clinical RC."""
+
+        if self.centric_relation_confirmed:
+            return self.centric_relation_opening_angle_degrees
+        return 0.0
 
     @property
     def lateral_angle_degrees(self) -> float:
@@ -108,7 +130,12 @@ class FunctionalCalibrationController:
         """Whether every movement and fine adjustment is exactly at RC."""
 
         return (
-            self._is_zero(self.opening_angle_degrees)
+            self.centric_relation_confirmed
+            and math.isclose(
+                self.opening_angle_degrees,
+                self.centric_relation_opening_angle_degrees,
+                abs_tol=1e-12,
+            )
             and self._is_zero(self.lateral_angle_degrees)
             and self._is_zero(self.protrusion_distance_mm)
             and self._is_zero(self.adjustment_angle_degrees)
@@ -117,11 +144,38 @@ class FunctionalCalibrationController:
     def _require_centric_relation(self, movement_name: str) -> None:
         """Protect the start of a new functional path with the RC reference."""
 
+        if not self.centric_relation_confirmed:
+            raise ValueError(
+                "Confirm the clinical centric-relation contact before "
+                f"starting {movement_name}."
+            )
         if not self.is_at_centric_relation:
             raise ValueError(
                 "Return to centric relation before starting "
                 f"{movement_name}."
             )
+
+    def confirm_current_as_centric_relation(
+        self,
+    ) -> MandibularOcclusalPosition:
+        """Lock the current hinge-only position as the clinical RC origin."""
+
+        if (
+            not self._is_zero(self.lateral_angle_degrees)
+            or not self._is_zero(self.protrusion_distance_mm)
+            or not self._is_zero(self.adjustment_angle_degrees)
+        ):
+            raise ValueError(
+                "Clinical centric relation must be confirmed on the "
+                "hinge path without protrusion, lateral movement, or "
+                "fine occlusal adjustment."
+            )
+
+        self._centric_relation_opening_angle_degrees = (
+            self.opening_angle_degrees
+        )
+        self.centric_relation_confirmed = True
+        return self.position
 
     def _state(self) -> tuple[float, float, float]:
         """
@@ -232,6 +286,17 @@ class FunctionalCalibrationController:
         protrusion_distance_mm = float(
             protrusion_distance_mm
         )
+        opening_angle_degrees = float(opening_angle_degrees)
+
+        if (
+            self.centric_relation_confirmed
+            and opening_angle_degrees
+            < self.centric_relation_opening_angle_degrees - 1e-12
+        ):
+            raise ValueError(
+                "Opening cannot close below the confirmed clinical "
+                "centric-relation contact."
+            )
 
         if math.isfinite(lateral_angle_degrees):
             if lateral_angle_degrees > 0.0:
@@ -373,7 +438,7 @@ class FunctionalCalibrationController:
             max(
                 self.opening_angle_degrees
                 - self.combined.opening_step_degrees,
-                0.0,
+                self.minimum_opening_angle_degrees,
             )
         )
 
@@ -435,7 +500,9 @@ class FunctionalCalibrationController:
         """
 
         return self.set_position(
-            opening_angle_degrees=0.0,
+            opening_angle_degrees=(
+                self.minimum_opening_angle_degrees
+            ),
             lateral_angle_degrees=0.0,
             protrusion_distance_mm=0.0,
         )

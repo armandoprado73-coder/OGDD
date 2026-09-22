@@ -39,6 +39,7 @@ class FunctionalCalibrationPanel(QWidget):
     go_right_canine_requested = Signal()
     go_left_canine_requested = Signal()
     clear_limits_requested = Signal()
+    confirm_rc_requested = Signal()
     rc_requested = Signal()
 
     def __init__(self, parent=None) -> None:
@@ -73,6 +74,8 @@ class FunctionalCalibrationPanel(QWidget):
         self.path_value = QLabel("—")
         self.active_path_value = QLabel("RC")
         self._mounting_available = False
+        self._rc_confirmed = False
+        self._rc_opening_angle_degrees = 0.0
         self._maximum_opening_degrees = 30.0
         self._maximum_translation_mm: float | None = None
         self._maximum_right_lateral_degrees: float | None = None
@@ -94,6 +97,19 @@ class FunctionalCalibrationPanel(QWidget):
         form.addRow("Ajuste oclusal", self.closure_value)
         form.addRow("Recorrido disponible", self.path_value)
         form.addRow("Ruta activa", self.active_path_value)
+
+        self.confirm_rc_button = QPushButton(
+            "Confirmar contacto inicial RC"
+        )
+        self.confirm_rc_button.setStyleSheet(
+            "QPushButton { background: #2f7775; color: white; "
+            "font-weight: 600; padding: 8px; border-radius: 3px; }"
+            "QPushButton:disabled { background: #a8bfbe; "
+            "color: #edf4f4; }"
+        )
+        self.confirm_rc_button.clicked.connect(
+            lambda checked=False: self.confirm_rc_requested.emit()
+        )
 
         movement_title = QLabel("Movimiento mandibular base")
         movement_title.setStyleSheet(
@@ -296,6 +312,7 @@ class FunctionalCalibrationPanel(QWidget):
         layout.addWidget(instructions)
         layout.addWidget(self.availability_label)
         layout.addLayout(form)
+        layout.addWidget(self.confirm_rc_button)
         layout.addWidget(movement_title)
         layout.addLayout(movement_sliders)
         layout.addLayout(opening_buttons)
@@ -356,7 +373,11 @@ class FunctionalCalibrationPanel(QWidget):
             QSignalBlocker(self.lateral_slider),
         )
         self.opening_slider.setRange(
-            0,
+            self._to_slider(
+                self._rc_opening_angle_degrees
+                if self._rc_confirmed
+                else 0.0
+            ),
             self._to_slider(self._maximum_opening_degrees),
         )
         maximum_translation = self._maximum_translation_mm or 0.0
@@ -392,11 +413,21 @@ class FunctionalCalibrationPanel(QWidget):
         if self._lateral_angle_degrees < 0.0:
             return "left_canine"
         if (
-            self._opening_angle_degrees != 0.0
+            not self._is_at_rc_opening()
             or self._adjustment_angle_degrees != 0.0
         ):
             return "hinge"
         return "rc"
+
+    def _is_at_rc_opening(self) -> bool:
+        """Whether the displayed hinge opening equals the saved RC contact."""
+
+        reference = (
+            self._rc_opening_angle_degrees
+            if self._rc_confirmed
+            else 0.0
+        )
+        return abs(self._opening_angle_degrees - reference) <= 1e-12
 
     def _show_active_route(self) -> None:
         """Explain which RC-based route currently owns the controls."""
@@ -417,10 +448,16 @@ class FunctionalCalibrationPanel(QWidget):
         maximum_opening_degrees: float = 30.0,
         maximum_right_lateral_degrees: float | None = None,
         maximum_left_lateral_degrees: float | None = None,
+        rc_confirmed: bool = True,
+        rc_opening_angle_degrees: float = 0.0,
     ) -> None:
         """Reflect whether functional calibration has a valid RC reference."""
 
         self._mounting_available = bool(available)
+        self._rc_confirmed = bool(rc_confirmed) if available else False
+        self._rc_opening_angle_degrees = (
+            float(rc_opening_angle_degrees) if available else 0.0
+        )
         self._maximum_opening_degrees = float(maximum_opening_degrees)
         self._maximum_translation_mm = (
             None
@@ -445,7 +482,10 @@ class FunctionalCalibrationPanel(QWidget):
         self._show_active_route()
         self.availability_label.setVisible(not available)
         if available:
-            self.reference_value.setText("RC confirmada")
+            self.show_rc_reference(
+                confirmed=self._rc_confirmed,
+                opening_angle_degrees=self._rc_opening_angle_degrees,
+            )
             self.opening_value.setText("0.0°")
             self.protrusion_value.setText("0.0 mm")
             self.lateral_value.setText("0.0°")
@@ -459,7 +499,12 @@ class FunctionalCalibrationPanel(QWidget):
                 maximum_right_lateral_degrees is not None
                 and maximum_left_lateral_degrees is not None
             )
-            if maximum_translation is None:
+            if not self._rc_confirmed:
+                self.state_label.setText(
+                    "Abra la mordida en pasos de 0.1° hasta encontrar "
+                    "el primer contacto y confirme esa posición como RC."
+                )
+            elif maximum_translation is None:
                 self.state_label.setText(
                     "Apertura sobre el eje de bisagra disponible. "
                     "La protrusión requiere un recorrido conocido."
@@ -501,6 +546,8 @@ class FunctionalCalibrationPanel(QWidget):
         self.path_value.setText("—")
         self.active_path_value.setText("RC")
         self._maximum_translation_mm = None
+        self._rc_confirmed = False
+        self._rc_opening_angle_degrees = 0.0
         self._maximum_right_lateral_degrees = None
         self._maximum_left_lateral_degrees = None
         self._opening_angle_degrees = 0.0
@@ -521,6 +568,40 @@ class FunctionalCalibrationPanel(QWidget):
             "el montaje."
         )
         self._set_state_style(ready=False)
+        self._update_movement_controls()
+
+    def show_rc_reference(
+        self,
+        *,
+        confirmed: bool,
+        opening_angle_degrees: float,
+    ) -> None:
+        """Display the operator-confirmed clinical RC hinge reference."""
+
+        self._rc_confirmed = bool(confirmed)
+        self._rc_opening_angle_degrees = float(opening_angle_degrees)
+        if self._rc_confirmed:
+            if abs(self._rc_opening_angle_degrees) <= 1e-12:
+                self.reference_value.setText("RC confirmada")
+            else:
+                self.reference_value.setText(
+                    "RC clínica confirmada — "
+                    f"apertura {self._rc_opening_angle_degrees:.1f}°"
+                )
+            self.state_label.setText(
+                "La posición RC clínica está bloqueada como origen de "
+                "los movimientos y del diagnóstico RC–MIC."
+            )
+            self._set_state_style(ready=True)
+        else:
+            self.reference_value.setText("Contacto inicial pendiente")
+            self.state_label.setText(
+                "Abra la mordida en pasos de 0.1° hasta encontrar el "
+                "primer contacto y confirme esa posición como RC."
+            )
+            self._set_state_style(ready=False)
+        self._configure_slider_ranges()
+        self._show_active_route()
         self._update_movement_controls()
 
     def show_opening(self, angle_degrees: float) -> None:
@@ -650,7 +731,12 @@ class FunctionalCalibrationPanel(QWidget):
     def _update_movement_controls(self) -> None:
         can_close = (
             self._mounting_available
-            and self._opening_angle_degrees > 0.0
+            and self._opening_angle_degrees
+            > (
+                self._rc_opening_angle_degrees
+                if self._rc_confirmed
+                else 0.0
+            )
         )
         can_open = (
             self._mounting_available
@@ -659,32 +745,38 @@ class FunctionalCalibrationPanel(QWidget):
         )
         can_retreat = (
             self._mounting_available
+            and self._rc_confirmed
             and self._protrusion_distance_mm > 0.0
         )
         can_advance = (
             self._mounting_available
+            and self._rc_confirmed
             and self._maximum_translation_mm is not None
             and self._protrusion_distance_mm
             < self._maximum_translation_mm
         )
         can_move_left = (
             self._mounting_available
+            and self._rc_confirmed
             and self._maximum_left_lateral_degrees is not None
             and self._lateral_angle_degrees
             > -self._maximum_left_lateral_degrees
         )
         can_move_right = (
             self._mounting_available
+            and self._rc_confirmed
             and self._maximum_right_lateral_degrees is not None
             and self._lateral_angle_degrees
             < self._maximum_right_lateral_degrees
         )
         can_center_lateral = (
             self._mounting_available
+            and self._rc_confirmed
             and self._lateral_angle_degrees != 0.0
         )
         has_adjustment = (
             self._mounting_available
+            and self._rc_confirmed
             and self._adjustment_angle_degrees != 0.0
         )
         can_save_protrusive = (
@@ -718,11 +810,13 @@ class FunctionalCalibrationPanel(QWidget):
         self.opening_slider.setEnabled(self._mounting_available)
         self.protrusion_slider.setEnabled(
             self._mounting_available
+            and self._rc_confirmed
             and self._maximum_translation_mm is not None
             and can_use_protrusion
         )
         self.lateral_slider.setEnabled(
             self._mounting_available
+            and self._rc_confirmed
             and self._maximum_right_lateral_degrees is not None
             and self._maximum_left_lateral_degrees is not None
             and can_use_lateral
@@ -734,8 +828,12 @@ class FunctionalCalibrationPanel(QWidget):
         self.left_button.setEnabled(can_move_left and can_use_lateral)
         self.right_button.setEnabled(can_move_right and can_use_lateral)
         self.lateral_zero_button.setEnabled(can_center_lateral)
-        self.fine_close_button.setEnabled(self._mounting_available)
-        self.fine_open_button.setEnabled(self._mounting_available)
+        self.fine_close_button.setEnabled(
+            self._mounting_available and self._rc_confirmed
+        )
+        self.fine_open_button.setEnabled(
+            self._mounting_available and self._rc_confirmed
+        )
         self.adjustment_zero_button.setEnabled(has_adjustment)
         self.save_protrusive_button.setEnabled(can_save_protrusive)
         self.save_right_canine_button.setEnabled(can_save_right_canine)
@@ -744,10 +842,19 @@ class FunctionalCalibrationPanel(QWidget):
         self.go_right_canine_button.setEnabled(self._right_canine_saved)
         self.go_left_canine_button.setEnabled(self._left_canine_saved)
         self.clear_limits_button.setEnabled(
-            self._mounting_available and has_limits
+            self._mounting_available and self._rc_confirmed and has_limits
+        )
+        self.confirm_rc_button.setEnabled(
+            self._mounting_available and not self._rc_confirmed
         )
         self.rc_button.setEnabled(
-            can_close or can_retreat or can_center_lateral or has_adjustment
+            self._rc_confirmed
+            and (
+                not self._is_at_rc_opening()
+                or can_retreat
+                or can_center_lateral
+                or has_adjustment
+            )
         )
 
     def _set_state_style(self, *, ready: bool) -> None:

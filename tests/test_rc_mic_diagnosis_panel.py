@@ -74,6 +74,23 @@ def test_mounting_without_record_reports_missing_mic(qt_application) -> None:
     assert not panel.mandibular_seed_button.isEnabled()
 
 
+def test_unconfirmed_clinical_rc_keeps_diagnosis_protected(
+    qt_application,
+) -> None:
+    panel = RcMicDiagnosisPanel()
+
+    panel.set_prerequisites(
+        mic_available=True,
+        mounting_available=True,
+        rc_reference_confirmed=False,
+    )
+
+    assert "contacto inicial" in panel.availability_label.text()
+    assert not panel.maxillary_seed_button.isEnabled()
+    assert not panel.mandibular_seed_button.isEnabled()
+    assert not panel.diagnose_button.isEnabled()
+
+
 def test_two_manual_seeds_unlock_diagnosis(qt_application) -> None:
     panel = RcMicDiagnosisPanel()
     panel.set_prerequisites(mic_available=True, mounting_available=True)
