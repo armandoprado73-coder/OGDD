@@ -17,6 +17,9 @@ DIST_DIR = PROJECT_ROOT / "dist"
 PYINSTALLER_DIR = DIST_DIR / "pyinstaller"
 INSTALLER_DIR = DIST_DIR / "installers"
 SPEC_FILE = PROJECT_ROOT / "installer" / "ogdd.spec"
+APPLICATION_ICON = (
+    PROJECT_ROOT / "src" / "ogdd" / "app" / "assets" / "ogdd-logo.png"
+)
 
 
 def project_version() -> str:
@@ -105,6 +108,7 @@ def build_linux_installer(application: Path, version: str) -> Path:
 
     desktop_file = PROJECT_ROOT / "installer" / "linux" / "ogdd.desktop"
     shutil.copy2(desktop_file, application / desktop_file.name)
+    shutil.copy2(APPLICATION_ICON, application / APPLICATION_ICON.name)
 
     INSTALLER_DIR.mkdir(parents=True, exist_ok=True)
     archive = DIST_DIR / f"OGDD-{version}-Linux-x86_64.tar.gz"

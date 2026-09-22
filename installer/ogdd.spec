@@ -1,6 +1,7 @@
 """PyInstaller definition for the standalone OGDD desktop application."""
 
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 from pyvista import _vtk
@@ -26,6 +27,10 @@ vtk_module_names = (
 
 datas = collect_data_files("pyvista") + collect_data_files("pyvistaqt") + [
     (str(PROJECT_ROOT / "LICENSE"), "."),
+    (
+        str(PROJECT_ROOT / "src" / "ogdd" / "app" / "assets" / "ogdd-logo.png"),
+        "ogdd/app/assets",
+    ),
 ]
 hiddenimports = (
     collect_submodules("pyvista", filter=is_runtime_pyvista_module)
@@ -63,6 +68,11 @@ executable = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
+    icon=(
+        str(PROJECT_ROOT / "installer" / "windows" / "ogdd.ico")
+        if sys.platform == "win32"
+        else None
+    ),
     codesign_identity=None,
     entitlements_file=None,
 )

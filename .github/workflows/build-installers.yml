@@ -70,6 +70,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Hosted Windows runners have no interactive OpenGL desktop.  This
+          # mode still imports every frozen module and constructs the complete
+          # Qt/VTK window, but deliberately does not show the render widget.
+          $env:OGDD_HEADLESS_STARTUP_CHECK = "1"
           $process = Start-Process "dist/pyinstaller/OGDD/OGDD.exe" -ArgumentList "--check-startup" -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             Write-Host "OGDD startup check exited with code $($process.ExitCode)."
@@ -84,6 +88,62 @@ jobs:
       - name: Check frozen Linux application startup
         if: runner.os == 'Linux'
         run: xvfb-run -a dist/pyinstaller/OGDD/OGDD --check-startup
+
+      - name: Test Windows installer lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "dist/installers/OGDD-*-Windows-x64-Setup.exe" | Select-Object -First 1
+          if ($null -eq $installer) {
+            throw "The Windows installer was not created."
+          }
+          $setup = Start-Process $installer.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait -PassThru
+          if ($setup.ExitCode -ne 0) {
+            throw "The Windows installer exited with code $($setup.ExitCode)."
+          }
+          $installRoot = Join-Path $env:LOCALAPPDATA "Programs/OGDD"
+          $installedApplication = Join-Path $installRoot "OGDD.exe"
+          if (-not (Test-Path $installedApplication)) {
+            throw "OGDD.exe was not installed in $installRoot."
+          }
+          $env:OGDD_HEADLESS_STARTUP_CHECK = "1"
+          $check = Start-Process $installedApplication -ArgumentList "--check-startup" -Wait -PassThru
+          if ($check.ExitCode -ne 0) {
+            throw "The installed application exited with code $($check.ExitCode)."
+          }
+          $uninstaller = Join-Path $installRoot "unins000.exe"
+          if (-not (Test-Path $uninstaller)) {
+            throw "The Windows uninstaller was not installed."
+          }
+          $uninstall = Start-Process $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) {
+            throw "The Windows uninstaller exited with code $($uninstall.ExitCode)."
+          }
+          if (Test-Path $installedApplication) {
+            throw "OGDD.exe remained after uninstallation."
+          }
+
+      - name: Test Linux installer lifecycle
+        if: runner.os == 'Linux'
+        run: |
+          test_home=$(mktemp -d)
+          trap 'rm -rf "${test_home}"' EXIT
+          export HOME="${test_home}"
+          export XDG_DATA_HOME="${test_home}/.local/share"
+          installer=$(find dist/installers -name 'OGDD-*-Linux-x86_64.run' -print -quit)
+          test -n "${installer}"
+          "${installer}"
+          installed_application="${XDG_DATA_HOME}/ogdd/OGDD/OGDD"
+          installed_icon="${XDG_DATA_HOME}/ogdd/OGDD/ogdd-logo.png"
+          desktop_file="${XDG_DATA_HOME}/applications/org.ogdd.OGDD.desktop"
+          test -x "${installed_application}"
+          test -f "${installed_icon}"
+          test -f "${desktop_file}"
+          grep -F "Icon=${installed_icon}" "${desktop_file}"
+          xvfb-run -a "${installed_application}" --check-startup
+          "${XDG_DATA_HOME}/ogdd/uninstall-ogdd.sh"
+          test ! -e "${installed_application}"
+          test ! -e "${desktop_file}"
 
       - name: Upload Windows startup diagnostics
         if: failure() && runner.os == 'Windows'

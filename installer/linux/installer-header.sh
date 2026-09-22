@@ -28,7 +28,10 @@ fi
 mv "${staging_dir}/OGDD" "${APP_DIR}"
 
 escaped_executable=$(printf '%s' "${APP_DIR}/OGDD" | sed 's/[&|]/\\&/g')
-sed "s|@OGDD_EXECUTABLE@|${escaped_executable}|g" \
+escaped_icon=$(printf '%s' "${APP_DIR}/ogdd-logo.png" | sed 's/[&|]/\\&/g')
+sed \
+    -e "s|@OGDD_EXECUTABLE@|${escaped_executable}|g" \
+    -e "s|@OGDD_ICON@|${escaped_icon}|g" \
     "${APP_DIR}/ogdd.desktop" > "${DESKTOP_FILE}"
 chmod 755 "${APP_DIR}/OGDD"
 chmod 644 "${DESKTOP_FILE}"

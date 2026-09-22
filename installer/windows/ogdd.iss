@@ -26,6 +26,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\OGDD.exe
+SetupIconFile=ogdd.ico
 CloseApplications=yes
 
 [Languages]

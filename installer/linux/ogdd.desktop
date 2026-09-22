@@ -6,6 +6,7 @@ GenericName=Digital Dentistry Geometry
 Comment=Open Geometry for Digital Dentistry
 Exec=@OGDD_EXECUTABLE@
 TryExec=@OGDD_EXECUTABLE@
+Icon=@OGDD_ICON@
 Terminal=false
 Categories=Education;Science;MedicalSoftware;
 StartupNotify=true
