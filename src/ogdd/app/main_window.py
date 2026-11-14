@@ -1796,6 +1796,7 @@ class MainWindow(QMainWindow):
             "protrusive",
             "left_canine",
             "centric_top",
+            "centric_bottom",
         )
         captures: dict[str, Path | None] = {key: None for key in keys}
         controller = self._functional_calibration_controller
@@ -1824,9 +1825,11 @@ class MainWindow(QMainWindow):
             self._show_functional_position(position)
             if controller.centric_relation_confirmed:
                 self._set_report_layers({"maxillary_rc", "mandibular_rc"})
-                path = directory / "centric_top.png"
-                self.scene.save_superior_rc_screenshot(str(path))
-                captures["centric_top"] = path
+                for key, view in (("centric_top", "top"),
+                                  ("centric_bottom", "bottom")):
+                    path = directory / f"{key}.png"
+                    self.scene.save_rc_occlusal_screenshot(str(path), view)
+                    captures[key] = path
             if self._rc_mic_registration is not None:
                 self._set_report_layers(
                     {

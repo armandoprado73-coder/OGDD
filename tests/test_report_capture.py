@@ -16,34 +16,41 @@ from ogdd.app.scene_view import SceneView
 
 
 @pytest.mark.parametrize("capture_fails", [False, True])
-def test_top_capture_restores_maxillary_opacity(capture_fails):
-    prop = MagicMock()
-    prop.GetOpacity.return_value = 0.75
-    actor = MagicMock()
-    actor.GetProperty.return_value = prop
+@pytest.mark.parametrize("view", ["top", "bottom"])
+def test_occlusal_capture_never_changes_model_opacity(capture_fails, view):
+    upper, lower = MagicMock(), MagicMock()
+    upper.GetOpacity.return_value = 0.75
+    lower.GetOpacity.return_value = 0.6
+    upper_actor, lower_actor = MagicMock(), MagicMock()
+    upper_actor.GetProperty.return_value = upper
+    lower_actor.GetProperty.return_value = lower
     scene = SimpleNamespace(
-        _layer_actors={"maxillary_rc": [actor]},
+        _layer_actors={"maxillary_rc": [upper_actor],
+                       "mandibular_rc": [lower_actor]},
         set_anatomical_view=MagicMock(),
         save_screenshot=MagicMock(),
     )
-    def capture(path):
-        prop.SetOpacity.assert_called_once_with(0.2)
+    def capture(path, **kwargs):
+        upper.SetOpacity.assert_not_called()
+        lower.SetOpacity.assert_not_called()
+        assert kwargs == {"window_size": (960, 720)}
         if capture_fails:
             raise OSError("capture failed")
     scene.save_screenshot.side_effect = capture
     if capture_fails:
         with pytest.raises(OSError, match="capture failed"):
-            SceneView.save_superior_rc_screenshot(scene, "top.png")
+            SceneView.save_rc_occlusal_screenshot(scene, "capture.png", view)
     else:
-        SceneView.save_superior_rc_screenshot(scene, "top.png")
-    scene.set_anatomical_view.assert_called_once_with("top")
-    assert prop.SetOpacity.call_args.args == (0.75,)
+        SceneView.save_rc_occlusal_screenshot(scene, "capture.png", view)
+    scene.set_anatomical_view.assert_called_once_with(view)
+    upper.SetOpacity.assert_not_called()
+    lower.SetOpacity.assert_not_called()
 
 
 @pytest.mark.parametrize("confirmed", [False, True])
-@pytest.mark.parametrize("capture_fails", [False, True])
+@pytest.mark.parametrize("fail_at", [None, "top", "bottom"])
 def test_report_captures_confirmed_rc_and_restores_state(
-    tmp_path, confirmed, capture_fails,
+    tmp_path, confirmed, fail_at,
 ):
     controller = MagicMock()
     controller.centric_relation_confirmed = confirmed
@@ -67,23 +74,29 @@ def test_report_captures_confirmed_rc_and_restores_state(
         _update_window_title=MagicMock(),
         _refresh_results_panel=MagicMock(),
     )
-    def capture(path):
+    def capture(path, view):
         window._show_functional_position.assert_called_once_with(
             "confirmed RC position"
         )
         window._set_report_layers.assert_called_with(
             {"maxillary_rc", "mandibular_rc"}
         )
-        if capture_fails:
+        if view == fail_at:
             raise OSError("capture failed")
-    window.scene.save_superior_rc_screenshot.side_effect = capture
-    if confirmed and capture_fails:
+    window.scene.save_rc_occlusal_screenshot.side_effect = capture
+    if confirmed and fail_at:
         with pytest.raises(OSError, match="capture failed"):
             MainWindow._capture_report_visuals(window, tmp_path)
     else:
         captures = MainWindow._capture_report_visuals(window, tmp_path)
         assert captures["centric_top"] == (
             tmp_path / "centric_top.png" if confirmed else None
+        )
+        assert captures["centric_bottom"] == (
+            tmp_path / "centric_bottom.png" if confirmed else None
+        )
+        assert window.scene.save_rc_occlusal_screenshot.call_count == (
+            2 if confirmed else 0
         )
     controller.set_position.assert_called_once_with(
         opening_angle_degrees=1.2,
