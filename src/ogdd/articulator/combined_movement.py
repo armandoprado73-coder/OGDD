@@ -75,10 +75,20 @@ class CombinedMovement:
 
     protrusion: GuidedProtrusion
 
+    minimum_opening_angle_degrees: float = 0.0
+
     def __post_init__(self) -> None:
         """
         Validate that every movement shares one assembly.
         """
+
+        if (
+            not math.isfinite(self.minimum_opening_angle_degrees)
+            or self.minimum_opening_angle_degrees > 0.0
+        ):
+            raise ValueError(
+                "Minimum opening angle must be finite and non-positive."
+            )
 
         if (
             self.right_excursion.working_side
@@ -144,12 +154,12 @@ class CombinedMovement:
                 "share the same right condyle."
             )
 
-    @staticmethod
     def _validated_opening_angle(
+        self,
         opening_angle_degrees: float,
     ) -> float:
         """
-        Validate a non-negative opening angle.
+        Validate opening relative to the imported mandibular position.
         """
 
         opening_angle_degrees = float(
@@ -158,11 +168,11 @@ class CombinedMovement:
 
         if (
             not math.isfinite(opening_angle_degrees)
-            or opening_angle_degrees < 0.0
+            or opening_angle_degrees < self.minimum_opening_angle_degrees
         ):
             raise ValueError(
                 "The opening angle must be "
-                "non-negative and finite."
+                "finite and within the configured lower limit."
             )
 
         return opening_angle_degrees

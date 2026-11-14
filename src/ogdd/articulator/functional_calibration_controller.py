@@ -81,11 +81,11 @@ class FunctionalCalibrationController:
 
     @property
     def minimum_opening_angle_degrees(self) -> float:
-        """Lowest safe opening after the operator confirms clinical RC."""
+        """Use calibration travel until the operator locks clinical RC."""
 
         if self.centric_relation_confirmed:
             return self.centric_relation_opening_angle_degrees
-        return 0.0
+        return self.combined.minimum_opening_angle_degrees
 
     @property
     def lateral_angle_degrees(self) -> float:
@@ -496,12 +496,14 @@ class FunctionalCalibrationController:
 
     def reset_movement(self) -> MandibularOcclusalPosition:
         """
-        Return all combined movement components to zero.
+        Return to confirmed RC, or to imported zero before confirmation.
         """
 
         return self.set_position(
             opening_angle_degrees=(
-                self.minimum_opening_angle_degrees
+                self.centric_relation_opening_angle_degrees
+                if self.centric_relation_confirmed
+                else 0.0
             ),
             lateral_angle_degrees=0.0,
             protrusion_distance_mm=0.0,

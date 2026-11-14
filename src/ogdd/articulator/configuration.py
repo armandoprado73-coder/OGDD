@@ -9,6 +9,10 @@ from enum import Enum
 import math
 
 
+# Software travel for locating clinical RC relative to an open bite record.
+RC_CALIBRATION_MINIMUM_OPENING_DEGREES = -5.0
+
+
 class IntercondylarPreset(Enum):
     """
     Standard intercondylar width presets in millimeters.

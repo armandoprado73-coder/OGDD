@@ -692,6 +692,27 @@ class SceneView(QFrame):
             window_size=window_size,
         )
 
+    def save_superior_rc_screenshot(self, path: str) -> None:
+        """Reveal the lower occlusal surface through a translucent maxilla.
+
+        The caller supplies the operator-confirmed RC position and restores
+        the camera and visible layers after capturing the report views.
+        """
+
+        properties = [
+            actor.GetProperty()
+            for actor in self._layer_actors.get("maxillary_rc", [])
+        ]
+        opacities = [prop.GetOpacity() for prop in properties]
+        try:
+            for prop in properties:
+                prop.SetOpacity(0.2)
+            self.set_anatomical_view("top")
+            self.save_screenshot(path)
+        finally:
+            for prop, opacity in zip(properties, opacities):
+                prop.SetOpacity(opacity)
+
     def close_scene(self) -> None:
         """Release VTK resources before closing the Qt window."""
 

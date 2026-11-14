@@ -354,9 +354,9 @@ class ResultsExporter:
             .visual-grid td:first-child {{ width: 33%; font-weight: normal;
                                            color: #20323a; }}
             .visual-title {{ font-weight: bold; color: #315b5f;
-                             font-size: 9pt; margin-bottom: 4px; }}
+                             font-size: 9pt; margin: 0 0 4px 0; }}
             .visual-detail {{ color: #60757d; font-size: 8pt;
-                              margin-top: 4px; }}
+                              margin: 4px 0 0 0; }}
             .visual-missing {{ background: #f3f6f7; color: #71838a;
                                padding: 58px 4px; }}
             .footer {{ color: #71838a; font-size: 8pt; margin-top: 20px; }}
@@ -449,12 +449,20 @@ class ResultsExporter:
             "<tr>" + "".join(cells[index : index + 3]) + "</tr>"
             for index in range(0, len(cells), 3)
         )
+        centric_card = ResultsExporter._visual_card(
+            "Punto céntrico - vista superior",
+            "RC confirmada por el operador; maxilar semitransparente.",
+            image_urls.get("centric_top"),
+            column_span=3,
+            image_width=280,
+            image_height=210,
+        )
         return f"""
         <div class="page-break"></div>
         <h1>Registro visual del montaje</h1>
         <div class="subtitle">{escape(snapshot.study_name)}<br>
         Comparación diagnóstica y posiciones funcionales confirmadas.</div>
-        <table class="visual-grid">{rows}</table>
+        <table class="visual-grid">{rows}<tr>{centric_card}</tr></table>
         <div class="footer">Las vistas fueron generadas automáticamente con
         la orientación anatómica y los límites guardados en el estudio.</div>
         """
@@ -464,16 +472,23 @@ class ResultsExporter:
         title: str,
         detail: str,
         image_url: str | None,
+        *,
+        column_span: int = 1,
+        image_width: int = 180,
+        image_height: int = 135,
     ) -> str:
         if image_url is None:
             image = '<div class="visual-missing">Posición no registrada</div>'
         else:
             image = (
-                f'<img src="{escape(image_url)}" width="180" height="135">'
+                f'<img src="{escape(image_url)}" '
+                f'width="{image_width}" height="{image_height}">'
             )
         return (
-            f'<td><div class="visual-title">{escape(title)}</div>'
-            f'{image}<div class="visual-detail">{escape(detail)}</div></td>'
+            f'<td colspan="{column_span}">'
+            f'<p class="visual-title">{escape(title)}</p>'
+            f'<p style="margin: 0;">{image}</p>'
+            f'<p class="visual-detail">{escape(detail)}</p></td>'
         )
 
     @staticmethod

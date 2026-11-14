@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -17,6 +18,12 @@ from ogdd.articulator.combined_movement import (
 from ogdd.articulator.condylar_guide import (
     CondylarGuide,
 )
+from ogdd.articulator.combined_controller import CombinedController
+from ogdd.articulator.functional_calibration_controller import (
+    FunctionalCalibrationController,
+)
+from ogdd.articulator.occlusal_closure import OcclusalClosure
+from ogdd.articulator.occlusal_closure_controller import OcclusalClosureController
 from ogdd.articulator.guided_lateral_excursion import (
     GuidedLateralExcursion,
 )
@@ -203,6 +210,69 @@ def pairwise_distances(points: np.ndarray) -> np.ndarray:
         - points[None, :, :],
         axis=2,
     )
+
+
+def test_open_record_can_close_and_lock_a_negative_clinical_rc(
+    combined_movement: CombinedMovement,
+) -> None:
+    movement = replace(combined_movement, minimum_opening_angle_degrees=-5.0)
+    combined = CombinedController(
+        movement=movement,
+        maximum_opening_angle_degrees=30.0,
+        maximum_lateral_angle_degrees=8.0,
+        maximum_protrusion_distance_mm=17.0,
+        opening_step_degrees=0.1,
+    )
+    controller = FunctionalCalibrationController(
+        combined=combined,
+        closure=OcclusalClosureController(
+            closure=OcclusalClosure(), base_position=combined.position,
+        ),
+        centric_relation_confirmed=False,
+    )
+    original = movement.assembly.mesh.vertices.copy()
+    for _ in range(6):
+        controller.close_mandible()
+    assert controller.opening_angle_degrees == pytest.approx(-0.6)
+    # Closing raises the anterior landmark while both condyles stay fixed.
+    assert controller.position.bonwill.dental_midline.point[2] > 0.0
+    assert np.allclose(
+        controller.position.bonwill.left_condyle.point,
+        movement.assembly.bonwill.left_condyle.point,
+    )
+    assert np.allclose(
+        pairwise_distances(controller.position.mesh.vertices),
+        pairwise_distances(original),
+    )
+    assert np.array_equal(movement.assembly.mesh.vertices, original)
+    with pytest.raises(ValueError, match="Confirm the clinical"):
+        controller.set_protrusion(1.0)
+    controller.reset_movement()
+    assert controller.opening_angle_degrees == 0.0
+    controller.set_opening(-0.6)
+    controller.confirm_current_as_centric_relation()
+    rc_vertices = controller.position.mesh.vertices.copy()
+    controller.close_mandible()
+    assert controller.opening_angle_degrees == -0.6
+    with pytest.raises(ValueError, match="confirmed clinical"):
+        controller.set_opening(-0.7)
+    controller.set_protrusion(1.0)
+    controller.reset_movement()
+    assert controller.is_at_centric_relation
+    assert np.allclose(controller.position.mesh.vertices, rc_vertices)
+    controller.set_lateral(1.0)
+    controller.reset_movement()
+    assert np.allclose(controller.position.mesh.vertices, rc_vertices)
+    with pytest.raises(ValueError, match="configured limits"):
+        combined.set_opening(-5.1)
+    with pytest.raises(ValueError, match="configured limits"):
+        combined.set_protrusion(-0.1)
+
+
+@pytest.mark.parametrize("minimum", [0.1, math.nan, math.inf, -math.inf])
+def test_rejects_invalid_minimum_opening(combined_movement, minimum):
+    with pytest.raises(ValueError, match="Minimum opening"):
+        replace(combined_movement, minimum_opening_angle_degrees=minimum)
 
 
 def test_zero_returns_original_geometry(

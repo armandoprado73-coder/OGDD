@@ -37,7 +37,10 @@ from ogdd.articulator.bonwill_builder import BonwillBuilder
 from ogdd.articulator.combined_controller import CombinedController
 from ogdd.articulator.combined_movement import CombinedMovement
 from ogdd.articulator.condylar_guide_builder import CondylarGuideBuilder
-from ogdd.articulator.configuration import ArticulatorConfiguration
+from ogdd.articulator.configuration import (
+    ArticulatorConfiguration,
+    RC_CALIBRATION_MINIMUM_OPENING_DEGREES,
+)
 from ogdd.articulator.functional_calibration_controller import (
     FunctionalCalibrationController,
 )
@@ -1783,7 +1786,7 @@ class MainWindow(QMainWindow):
         self,
         directory: Path,
     ) -> dict[str, Path | None]:
-        """Create six reproducible views while preserving interactive state."""
+        """Capture clinical views while preserving interactive state."""
 
         keys = (
             "overlay_right",
@@ -1792,6 +1795,7 @@ class MainWindow(QMainWindow):
             "right_canine",
             "protrusive",
             "left_canine",
+            "centric_top",
         )
         captures: dict[str, Path | None] = {key: None for key in keys}
         controller = self._functional_calibration_controller
@@ -1818,6 +1822,11 @@ class MainWindow(QMainWindow):
             controller.reset_movement()
             position = controller.reset_adjustment()
             self._show_functional_position(position)
+            if controller.centric_relation_confirmed:
+                self._set_report_layers({"maxillary_rc", "mandibular_rc"})
+                path = directory / "centric_top.png"
+                self.scene.save_superior_rc_screenshot(str(path))
+                captures["centric_top"] = path
             if self._rc_mic_registration is not None:
                 self._set_report_layers(
                     {
@@ -2225,6 +2234,9 @@ class MainWindow(QMainWindow):
             right_excursion=right_excursion,
             left_excursion=left_excursion,
             protrusion=protrusion,
+            minimum_opening_angle_degrees=(
+                RC_CALIBRATION_MINIMUM_OPENING_DEGREES
+            ),
         )
         combined_controller = CombinedController(
             movement=combined_movement,
