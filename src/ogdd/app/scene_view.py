@@ -10,6 +10,8 @@ import pyvista as pv
 from PySide6.QtWidgets import QFrame, QVBoxLayout
 from pyvistaqt import QtInteractor
 
+from .welcome_panel import WelcomePanel
+
 
 class SceneView(QFrame):
     """Central 3D view with named, independently visible layers."""
@@ -31,6 +33,7 @@ class SceneView(QFrame):
 
         self.plotter = QtInteractor(self)
         layout.addWidget(self.plotter.interactor)
+        self._welcome_panel = WelcomePanel(self.plotter.interactor)
 
         self._layer_actors: dict[str, list[Any]] = defaultdict(list)
         self._layer_surfaces: dict[str, pv.PolyData] = {}
@@ -46,15 +49,10 @@ class SceneView(QFrame):
         self.show_welcome()
 
     def show_welcome(self) -> None:
-        """Show the OGDD title while no study is loaded."""
+        """Show the centered logo while no study is loaded."""
 
-        self.plotter.add_text(
-            "OGDD\nOpen Geometry for Digital Dentistry",
-            position="upper_left",
-            color="#dce9eb",
-            font_size=13,
-            name="welcome",
-        )
+        self._welcome_panel.show()
+        self._welcome_panel.raise_()
 
     @staticmethod
     def _to_polydata(mesh: Any) -> pv.PolyData:
@@ -629,6 +627,7 @@ class SceneView(QFrame):
     def finish_study_load(self) -> None:
         """Frame newly loaded models and remove the welcome message."""
 
+        self._welcome_panel.hide()
         self.plotter.remove_actor("welcome", render=False)
         self.reset_camera()
 
@@ -691,6 +690,23 @@ class SceneView(QFrame):
             return_img=False,
             window_size=window_size,
         )
+
+    def save_superior_rc_screenshot(self, path: str) -> None:
+        """Retain the superior capture entry point for existing callers."""
+
+        self.save_rc_occlusal_screenshot(path, "top")
+
+    def save_rc_occlusal_screenshot(self, path: str, view: str) -> None:
+        """Capture confirmed RC using the operator's existing appearance.
+
+        The caller supplies the confirmed RC and restores camera and layers.
+        Both model opacities remain untouched throughout the capture.
+        """
+
+        if view not in {"top", "bottom"}:
+            raise ValueError("RC occlusal view must be top or bottom.")
+        self.set_anatomical_view(view)
+        self.save_screenshot(path, window_size=(960, 720))
 
     def close_scene(self) -> None:
         """Release VTK resources before closing the Qt window."""

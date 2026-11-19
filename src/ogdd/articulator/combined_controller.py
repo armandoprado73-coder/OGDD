@@ -27,7 +27,8 @@ class CombinedController:
 
     Negative lateral angles represent left excursion.
     Positive lateral angles represent right excursion.
-    Opening and protrusion use non-negative values.
+    Protrusion uses non-negative values. Opening can close below the
+    imported zero when the movement enables clinical-RC calibration.
 
     Lateral excursion and protrusion share condylar guide
     travel. Their available limits are therefore dynamic.
@@ -193,6 +194,12 @@ class CombinedController:
             return 0.0
 
         return value
+
+    @property
+    def minimum_opening_angle_degrees(self) -> float:
+        """Lower hinge limit supplied by the movement geometry."""
+
+        return self.movement.minimum_opening_angle_degrees
 
     @property
     def opening_angle_degrees(self) -> float:
@@ -468,7 +475,7 @@ class CombinedController:
 
         if (
             not math.isfinite(opening_angle_degrees)
-            or not 0.0
+            or not self.minimum_opening_angle_degrees
             <= opening_angle_degrees
             <= self.maximum_opening_angle_degrees
         ):
@@ -668,7 +675,7 @@ class CombinedController:
             max(
                 self._opening_angle_degrees
                 - self.opening_step_degrees,
-                0.0,
+                self.minimum_opening_angle_degrees,
             )
         )
 

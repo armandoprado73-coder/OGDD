@@ -186,6 +186,13 @@ class ResultsExporter:
         path.parent.mkdir(parents=True, exist_ok=True)
         document = QTextDocument()
         document.setDocumentMargin(0)
+        logo = QImage(str(Path(__file__).with_name("assets") / "ogdd-logo.png"))
+        if logo.isNull():
+            raise OSError("OGDD could not read the report logo.")
+        logo_url = QUrl("ogdd-image:///brand-logo")
+        document.addResource(
+            QTextDocument.ResourceType.ImageResource, logo_url, logo,
+        )
         image_urls: dict[str, str | None] | None = None
         if visual_captures is not None:
             image_urls = {}
@@ -206,7 +213,10 @@ class ResultsExporter:
                 )
                 image_urls[key] = url.toString()
         document.setHtml(
-            ResultsExporter.pdf_html(snapshot, image_urls=image_urls)
+            ResultsExporter.pdf_html(
+                snapshot, image_urls=image_urls,
+                brand_image_url=logo_url.toString(),
+            )
         )
 
         writer = QPdfWriter(str(path))
@@ -227,8 +237,14 @@ class ResultsExporter:
         snapshot: StudyResultsSnapshot,
         *,
         image_urls: dict[str, str | None] | None = None,
+        brand_image_url: str | None = None,
     ) -> str:
         """Build deterministic, escaped HTML used by the PDF printer."""
+
+        if brand_image_url is None:
+            brand_image_url = QUrl.fromLocalFile(str(
+                Path(__file__).with_name("assets") / "ogdd-logo.png"
+            )).toString()
 
         sections = [
             ResultsExporter._html_table(
@@ -331,7 +347,15 @@ class ResultsExporter:
                 )
             )
 
-        visual_page = ResultsExporter._visual_page(snapshot, image_urls)
+        visual_page = ResultsExporter._visual_page(
+            snapshot, image_urls, brand_image_url,
+        )
+        header = ResultsExporter._report_header(
+            "OGDD",
+            "Open Geometry for Digital Dentistry<br>"
+            f"Informe de resultados: {escape(snapshot.study_name)}",
+            brand_image_url,
+        )
         return f"""
         <html>
         <head>
@@ -346,6 +370,9 @@ class ResultsExporter:
             table {{ width: 100%; border-collapse: collapse; }}
             td {{ border-bottom: 1px solid #d9e2e5; padding: 5px; }}
             td:first-child {{ width: 38%; font-weight: bold; color: #315b5f; }}
+            .report-header td {{ padding: 0; border: 0; vertical-align: middle; }}
+            .report-header td:first-child {{ width: 83%; font-weight: normal; }}
+            .report-header .brand {{ width: 17%; text-align: right; }}
             .page-break {{ page-break-before: always; }}
             .visual-grid {{ width: 100%; border-collapse: separate;
                             border-spacing: 3px; table-layout: fixed; }}
@@ -353,19 +380,23 @@ class ResultsExporter:
                                vertical-align: top; border: 1px solid #d9e2e5; }}
             .visual-grid td:first-child {{ width: 33%; font-weight: normal;
                                            color: #20323a; }}
+            .centric-grid {{ width: 100%; border-collapse: separate;
+                             border-spacing: 3px; }}
+            .centric-grid td {{ width: 50%; padding: 6px; text-align: center;
+                                vertical-align: top; border: 1px solid #d9e2e5;
+                                font-weight: normal; color: #20323a; }}
+            .centric-grid td:first-child {{ width: 50%; font-weight: normal; }}
             .visual-title {{ font-weight: bold; color: #315b5f;
-                             font-size: 9pt; margin-bottom: 4px; }}
+                             font-size: 9pt; margin: 0 0 4px 0; }}
             .visual-detail {{ color: #60757d; font-size: 8pt;
-                              margin-top: 4px; }}
+                              margin: 4px 0 0 0; }}
             .visual-missing {{ background: #f3f6f7; color: #71838a;
                                padding: 58px 4px; }}
             .footer {{ color: #71838a; font-size: 8pt; margin-top: 20px; }}
         </style>
         </head>
         <body>
-            <h1>OGDD</h1>
-            <div class="subtitle">Open Geometry for Digital Dentistry<br>
-            Informe de resultados: {escape(snapshot.study_name)}</div>
+            {header}
             <div class="axes"><b>Ejes anatómicos:</b> +X derecha del paciente,
             +Y anterior, +Z superior.</div>
             {''.join(sections)}
@@ -375,6 +406,20 @@ class ResultsExporter:
         </body>
         </html>
         """
+
+    @staticmethod
+    def _report_header(title: str, subtitle_html: str, logo_url: str) -> str:
+        """Share a compact branded header across the two report pages."""
+
+        return (
+            '<table class="report-header" width="100%" cellspacing="0" '
+            'cellpadding="0"><tr><td width="83%">'
+            f'<h1>{escape(title)}</h1>'
+            f'<div class="subtitle">{subtitle_html}</div></td>'
+            f'<td class="brand" width="17%" align="right">'
+            f'<img src="{escape(logo_url)}" '
+            'width="64" height="64"></td></tr></table>'
+        )
 
     @staticmethod
     def _html_table(title: str, rows: list[tuple[str, Any]]) -> str:
@@ -391,6 +436,7 @@ class ResultsExporter:
     def _visual_page(
         snapshot: StudyResultsSnapshot,
         image_urls: dict[str, str | None] | None,
+        brand_image_url: str,
     ) -> str:
         """Build the standardized second report page when requested."""
 
@@ -449,12 +495,31 @@ class ResultsExporter:
             "<tr>" + "".join(cells[index : index + 3]) + "</tr>"
             for index in range(0, len(cells), 3)
         )
+        centric_cards = "".join(
+            ResultsExporter._visual_card(
+                title, detail, image_urls.get(key),
+                image_width=260, image_height=195,
+            )
+            for key, title, detail in (
+                ("centric_top", "RC - vista superior",
+                 "Transparencia del área de trabajo."),
+                ("centric_bottom", "RC - vista inferior",
+                 "Transparencia del área de trabajo."),
+            )
+        )
+        header = ResultsExporter._report_header(
+            "Registro visual del montaje",
+            f"{escape(snapshot.study_name)}<br>"
+            "Comparación diagnóstica y posiciones funcionales confirmadas.",
+            brand_image_url,
+        )
         return f"""
         <div class="page-break"></div>
-        <h1>Registro visual del montaje</h1>
-        <div class="subtitle">{escape(snapshot.study_name)}<br>
-        Comparación diagnóstica y posiciones funcionales confirmadas.</div>
+        {header}
         <table class="visual-grid">{rows}</table>
+        <table class="centric-grid"><tr>{centric_cards}</tr></table>
+        <p class="visual-detail">Punto céntrico: ambas vistas corresponden a
+        la misma RC confirmada por el operador.</p>
         <div class="footer">Las vistas fueron generadas automáticamente con
         la orientación anatómica y los límites guardados en el estudio.</div>
         """
@@ -464,16 +529,23 @@ class ResultsExporter:
         title: str,
         detail: str,
         image_url: str | None,
+        *,
+        column_span: int = 1,
+        image_width: int = 180,
+        image_height: int = 135,
     ) -> str:
         if image_url is None:
             image = '<div class="visual-missing">Posición no registrada</div>'
         else:
             image = (
-                f'<img src="{escape(image_url)}" width="180" height="135">'
+                f'<img src="{escape(image_url)}" '
+                f'width="{image_width}" height="{image_height}">'
             )
         return (
-            f'<td><div class="visual-title">{escape(title)}</div>'
-            f'{image}<div class="visual-detail">{escape(detail)}</div></td>'
+            f'<td colspan="{column_span}">'
+            f'<p class="visual-title">{escape(title)}</p>'
+            f'<p style="margin: 0;">{image}</p>'
+            f'<p class="visual-detail">{escape(detail)}</p></td>'
         )
 
     @staticmethod

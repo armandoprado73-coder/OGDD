@@ -119,7 +119,7 @@ def test_pdf_export_creates_valid_pdf_header(
     assert path.stat().st_size > 5_000
 
 
-def test_visual_page_has_six_clinical_positions(snapshot) -> None:
+def test_visual_page_has_eight_clinical_positions(snapshot) -> None:
     image_urls = {
         "overlay_right": "ogdd-image:///overlay_right",
         "overlay_front": "ogdd-image:///overlay_front",
@@ -127,6 +127,8 @@ def test_visual_page_has_six_clinical_positions(snapshot) -> None:
         "right_canine": None,
         "protrusive": "ogdd-image:///protrusive",
         "left_canine": None,
+        "centric_top": "ogdd-image:///centric_top",
+        "centric_bottom": "ogdd-image:///centric_bottom",
     }
 
     html = ResultsExporter.pdf_html(snapshot, image_urls=image_urls)
@@ -138,6 +140,12 @@ def test_visual_page_has_six_clinical_positions(snapshot) -> None:
     assert "Canina derecha" in html
     assert "Borde a borde" in html
     assert "Canina izquierda" in html
+    assert "RC - vista superior" in html
+    assert "RC - vista inferior" in html
+    assert 'src="ogdd-image:///centric_bottom"' in html
+    assert html.count('class="report-header"') == 2
+    assert html.count('ogdd-logo.png') == 2
+    assert 'src="ogdd-image:///centric_top"' in html
     assert html.count("Posición no registrada") >= 2
 
 
@@ -157,6 +165,8 @@ def test_pdf_with_visual_captures_has_two_pages(
         "right_canine": None,
         "protrusive": capture,
         "left_canine": None,
+        "centric_top": capture,
+        "centric_bottom": capture,
     }
     path = tmp_path / "visual-results.pdf"
 

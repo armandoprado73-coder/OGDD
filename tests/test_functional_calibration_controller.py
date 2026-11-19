@@ -75,6 +75,7 @@ def combined() -> MagicMock:
     controller.lateral_step_degrees = 1.0
     controller.protrusion_step_mm = 1.0
     controller.maximum_opening_angle_degrees = 30.0
+    controller.minimum_opening_angle_degrees = 0.0
     controller.maximum_current_protrusion_distance_mm = 17.0
     controller.maximum_right_lateral_angle_degrees = 8.0
     controller.maximum_left_lateral_angle_degrees = 8.0

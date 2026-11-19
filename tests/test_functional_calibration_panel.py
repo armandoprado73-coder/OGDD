@@ -94,6 +94,8 @@ def test_panel_protects_movements_until_clinical_rc_is_confirmed(
     assert not panel.lateral_slider.isEnabled()
     assert not panel.fine_open_button.isEnabled()
     assert panel.confirm_rc_button.isEnabled()
+    assert panel.close_button.isEnabled()
+    assert panel.opening_slider.minimum() == -50
 
     panel.show_opening(0.6)
     panel.confirm_rc_button.click()
@@ -109,6 +111,25 @@ def test_panel_protects_movements_until_clinical_rc_is_confirmed(
     assert panel.advance_button.isEnabled()
     assert panel.fine_open_button.isEnabled()
     assert not panel.confirm_rc_button.isEnabled()
+
+
+def test_negative_rc_is_available_then_becomes_the_closing_limit(qt_application):
+    panel = FunctionalCalibrationPanel()
+    panel.set_mounting_available(True, 17.0, 30.0, 3.0, 3.0, rc_confirmed=False)
+    close_spy = QSignalSpy(panel.close_requested)
+    opening_spy = QSignalSpy(panel.opening_changed)
+    panel.close_button.click()
+    assert close_spy.count() == 1
+    panel.show_opening(-0.6)
+    assert panel.opening_slider.value() == -6
+    assert opening_spy.count() == 0
+    panel.show_rc_reference(confirmed=True, opening_angle_degrees=-0.6)
+    assert panel.opening_slider.minimum() == -6
+    assert not panel.close_button.isEnabled()
+    assert panel.open_button.isEnabled()
+    assert panel.advance_button.isEnabled()
+    panel.show_opening(0.0)
+    assert panel.close_button.isEnabled()
 
 
 def test_panel_can_report_mounting_without_known_path(qt_application) -> None:

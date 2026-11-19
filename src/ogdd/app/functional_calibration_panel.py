@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from ogdd.articulator.configuration import (
+    RC_CALIBRATION_MINIMUM_OPENING_DEGREES,
+)
+
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
@@ -376,7 +380,7 @@ class FunctionalCalibrationPanel(QWidget):
             self._to_slider(
                 self._rc_opening_angle_degrees
                 if self._rc_confirmed
-                else 0.0
+                else RC_CALIBRATION_MINIMUM_OPENING_DEGREES
             ),
             self._to_slider(self._maximum_opening_degrees),
         )
@@ -501,7 +505,7 @@ class FunctionalCalibrationPanel(QWidget):
             )
             if not self._rc_confirmed:
                 self.state_label.setText(
-                    "Abra la mordida en pasos de 0.1° hasta encontrar "
+                    "Abra o cierre la mordida en pasos de 0.1° hasta encontrar "
                     "el primer contacto y confirme esa posición como RC."
                 )
             elif maximum_translation is None:
@@ -596,7 +600,7 @@ class FunctionalCalibrationPanel(QWidget):
         else:
             self.reference_value.setText("Contacto inicial pendiente")
             self.state_label.setText(
-                "Abra la mordida en pasos de 0.1° hasta encontrar el "
+                "Abra o cierre la mordida en pasos de 0.1° hasta encontrar el "
                 "primer contacto y confirme esa posición como RC."
             )
             self._set_state_style(ready=False)
@@ -735,7 +739,7 @@ class FunctionalCalibrationPanel(QWidget):
             > (
                 self._rc_opening_angle_degrees
                 if self._rc_confirmed
-                else 0.0
+                else RC_CALIBRATION_MINIMUM_OPENING_DEGREES
             )
         )
         can_open = (

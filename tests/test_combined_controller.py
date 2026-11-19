@@ -19,6 +19,7 @@ def movement() -> MagicMock:
     movement = MagicMock(
         spec=CombinedMovement,
     )
+    movement.minimum_opening_angle_degrees = 0.0
 
     right_excursion = MagicMock()
     right_excursion.working_side = LateralSide.RIGHT
