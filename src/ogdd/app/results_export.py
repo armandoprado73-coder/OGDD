@@ -391,7 +391,7 @@ class ResultsExporter:
             .visual-detail {{ color: #60757d; font-size: 8pt;
                               margin: 4px 0 0 0; }}
             .visual-missing {{ background: #f3f6f7; color: #71838a;
-                               padding: 58px 4px; }}
+                               padding: 30px 4px; }}
             .footer {{ color: #71838a; font-size: 8pt; margin-top: 20px; }}
         </style>
         </head>
@@ -498,7 +498,7 @@ class ResultsExporter:
         centric_cards = "".join(
             ResultsExporter._visual_card(
                 title, detail, image_urls.get(key),
-                image_width=260, image_height=195,
+                image_width=190, image_height=142,
             )
             for key, title, detail in (
                 ("centric_top", "RC - vista superior",
@@ -531,8 +531,8 @@ class ResultsExporter:
         image_url: str | None,
         *,
         column_span: int = 1,
-        image_width: int = 180,
-        image_height: int = 135,
+        image_width: int = 150,
+        image_height: int = 112,
     ) -> str:
         if image_url is None:
             image = '<div class="visual-missing">Posición no registrada</div>'
