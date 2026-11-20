@@ -8,6 +8,7 @@ import os
 
 import numpy as np
 import pytest
+from scipy.ndimage import label
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -200,8 +201,8 @@ def test_pdf_with_visual_captures_has_two_pages(
     document = QPdfDocument()
     assert document.load(str(path)) == QPdfDocument.Error.None_
     assert document.pageCount() == 2
-    # Native font engines can write glyph outlines rather than selectable PDF
-    # text. Validate the actual rendered pages on both platforms; HTML tests
+    # Text extraction varies across native PDF font engines. Validate the
+    # actual rendered pages on both platforms; HTML tests
     # above separately check the clinical labels and numerical values.
     results = document.render(0, QSize(595, 842)).convertToFormat(
         QImage.Format.Format_RGBA8888
@@ -217,22 +218,21 @@ def test_pdf_with_visual_captures_has_two_pages(
     # The declared 14 mm PDF margin must not acquire Qt's extra 2 cm margin.
     assert 35 < ink_x.min() < 45
     assert 35 < ink_y.min() < 50
-    visual = document.render(1, QSize(595, 842))
+    visual = document.render(1, QSize(595, 842)).convertToFormat(
+        QImage.Format.Format_RGBA8888
+    )
     assert not visual.isNull()
-    for key, (x, y) in {
-        "overlay_right": (114, 160),
-        "overlay_front": (255, 160),
-        "overlay_left": (397, 160),
-        "right_canine": (114, 300),
-        "protrusive": (255, 300),
-        "left_canine": (397, 300),
-        "centric_top": (144, 460),
-        "centric_bottom": (351, 460),
-    }.items():
-        red, green, blue, alpha = visual.pixelColor(x, y).getRgb()
-        is_capture = alpha > 0 and all(
-            abs(actual - expected) <= 3
-            for actual, expected in zip((red, green, blue), (38, 57, 68))
-        )
-        assert is_capture == (captures[key] is not None), key
+    pixels = np.frombuffer(visual.constBits(), dtype=np.uint8).reshape(
+        visual.height(), visual.bytesPerLine()
+    )[:, : visual.width() * 4].reshape(visual.height(), visual.width(), 4)
+    # Font metrics can shift cards slightly, so locate each image by its test
+    # color instead of requiring identical pixel coordinates on every OS.
+    capture_pixels = (pixels[:, :, 3] > 0) & np.all(
+        np.abs(pixels[:, :, :3].astype(int) - (38, 57, 68)) <= 3, axis=2
+    )
+    components, count = label(capture_pixels)
+    areas = np.bincount(components.ravel())[1:]
+    expected_count = sum(capture is not None for capture in captures.values())
+    assert count == expected_count, areas.tolist()
+    assert np.all(areas > 5000), areas.tolist()
     document.close()
