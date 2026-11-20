@@ -9,7 +9,7 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QMarginsF, QUrl
+from PySide6.QtCore import QMarginsF, QSizeF, QUrl
 from PySide6.QtGui import (
     QImage,
     QPageLayout,
@@ -186,6 +186,13 @@ class ResultsExporter:
         path.parent.mkdir(parents=True, exist_ok=True)
         document = QTextDocument()
         document.setDocumentMargin(0)
+        # Lay out HTML pixels and point sizes at a fixed DPI, independent of
+        # the host desktop's font scaling. Keep the device alive until print_.
+        layout_device = QImage(1, 1, QImage.Format.Format_RGB32)
+        layout_device.setDotsPerMeterX(round(96 / 0.0254))
+        layout_device.setDotsPerMeterY(round(96 / 0.0254))
+        document.documentLayout().setPaintDevice(layout_device)
+        document.setUseDesignMetrics(True)
         logo = QImage(str(Path(__file__).with_name("assets") / "ogdd-logo.png"))
         if logo.isNull():
             raise OSError("OGDD could not read the report logo.")
@@ -226,6 +233,11 @@ class ResultsExporter:
             QMarginsF(14.0, 14.0, 14.0, 14.0),
             QPageLayout.Unit.Millimeter,
         )
+        # An unpaginated QTextDocument is cloned by print_, which adds its own
+        # 2 cm margins on top of the PDF margins. Paginate explicitly instead.
+        document.setPageSize(QSizeF(
+            writer.pageLayout().paintRectPixels(96).size()
+        ))
         document.print_(writer)
         del writer
         if not path.is_file() or path.stat().st_size == 0:

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import os
 
+import numpy as np
 import pytest
+from scipy.ndimage import label
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QSize
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import QApplication
@@ -149,10 +153,14 @@ def test_visual_page_has_eight_clinical_positions(snapshot) -> None:
     assert html.count("Posición no registrada") >= 2
 
 
+@pytest.mark.parametrize("capture_mode", ["mixed", "all", "none"])
+@pytest.mark.parametrize("all_limits", [False, True])
 def test_pdf_with_visual_captures_has_two_pages(
     tmp_path,
     snapshot,
     qt_application,
+    capture_mode,
+    all_limits,
 ) -> None:
     capture = tmp_path / "capture.png"
     image = QImage(960, 720, QImage.Format.Format_RGB32)
@@ -168,6 +176,20 @@ def test_pdf_with_visual_captures_has_two_pages(
         "centric_top": capture,
         "centric_bottom": capture,
     }
+    if capture_mode != "mixed":
+        captures = {
+            key: capture if capture_mode == "all" else None
+            for key in captures
+        }
+    if all_limits:
+        snapshot = replace(snapshot, functional_limits=tuple(
+            {**snapshot.functional_limits[0], "kind": kind}
+            for kind in (
+                "protrusive_edge_to_edge",
+                "right_canine_cusp_to_cusp",
+                "left_canine_cusp_to_cusp",
+            )
+        ))
     path = tmp_path / "visual-results.pdf"
 
     ResultsExporter.export_pdf(
@@ -179,3 +201,38 @@ def test_pdf_with_visual_captures_has_two_pages(
     document = QPdfDocument()
     assert document.load(str(path)) == QPdfDocument.Error.None_
     assert document.pageCount() == 2
+    # Text extraction varies across native PDF font engines. Validate the
+    # actual rendered pages on both platforms; HTML tests
+    # above separately check the clinical labels and numerical values.
+    results = document.render(0, QSize(595, 842)).convertToFormat(
+        QImage.Format.Format_RGBA8888
+    )
+    assert not results.isNull()
+    pixels = np.frombuffer(results.constBits(), dtype=np.uint8).reshape(
+        results.height(), results.bytesPerLine()
+    )[:, : results.width() * 4].reshape(results.height(), results.width(), 4)
+    ink_y, ink_x = np.where(
+        (pixels[:, :, 3] > 0) & np.any(pixels[:, :, :3] < 240, axis=2)
+    )
+    assert len(ink_x) > 1000
+    # The declared 14 mm PDF margin must not acquire Qt's extra 2 cm margin.
+    assert 35 < ink_x.min() < 45
+    assert 35 < ink_y.min() < 50
+    visual = document.render(1, QSize(595, 842)).convertToFormat(
+        QImage.Format.Format_RGBA8888
+    )
+    assert not visual.isNull()
+    pixels = np.frombuffer(visual.constBits(), dtype=np.uint8).reshape(
+        visual.height(), visual.bytesPerLine()
+    )[:, : visual.width() * 4].reshape(visual.height(), visual.width(), 4)
+    # Font metrics can shift cards slightly, so locate each image by its test
+    # color instead of requiring identical pixel coordinates on every OS.
+    capture_pixels = (pixels[:, :, 3] > 0) & np.all(
+        np.abs(pixels[:, :, :3].astype(int) - (38, 57, 68)) <= 3, axis=2
+    )
+    components, count = label(capture_pixels)
+    areas = np.bincount(components.ravel())[1:]
+    expected_count = sum(capture is not None for capture in captures.values())
+    assert count == expected_count, areas.tolist()
+    assert np.all(areas > 5000), areas.tolist()
+    document.close()
