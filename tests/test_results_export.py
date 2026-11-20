@@ -6,12 +6,14 @@ import csv
 from dataclasses import replace
 import os
 
+import numpy as np
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QSize
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import QApplication
@@ -198,19 +200,39 @@ def test_pdf_with_visual_captures_has_two_pages(
     document = QPdfDocument()
     assert document.load(str(path)) == QPdfDocument.Error.None_
     assert document.pageCount() == 2
-    results_text = document.getAllText(0).text()
-    visual_text = document.getAllText(1).text()
-    assert "Cóndilo izquierdo" in results_text
-    assert "0.8775 mm" in results_text
-    for title in (
-        "Vista derecha", "Vista frontal", "Vista izquierda",
-        "Canina derecha", "Borde a borde", "Canina izquierda",
-        "RC - vista superior", "RC - vista inferior",
-        "Las vistas fueron generadas automáticamente",
-    ):
-        assert title in visual_text
+    # Native font engines can write glyph outlines rather than selectable PDF
+    # text. Validate the actual rendered pages on both platforms; HTML tests
+    # above separately check the clinical labels and numerical values.
+    results = document.render(0, QSize(595, 842)).convertToFormat(
+        QImage.Format.Format_RGBA8888
+    )
+    assert not results.isNull()
+    pixels = np.frombuffer(results.constBits(), dtype=np.uint8).reshape(
+        results.height(), results.bytesPerLine()
+    )[:, : results.width() * 4].reshape(results.height(), results.width(), 4)
+    ink_y, ink_x = np.where(
+        (pixels[:, :, 3] > 0) & np.any(pixels[:, :, :3] < 240, axis=2)
+    )
+    assert len(ink_x) > 1000
     # The declared 14 mm PDF margin must not acquire Qt's extra 2 cm margin.
-    title_bounds = document.getAllText(0).boundingRectangle()
-    assert 35 < title_bounds.left() < 45
-    assert 35 < title_bounds.top() < 50
+    assert 35 < ink_x.min() < 45
+    assert 35 < ink_y.min() < 50
+    visual = document.render(1, QSize(595, 842))
+    assert not visual.isNull()
+    for key, (x, y) in {
+        "overlay_right": (114, 160),
+        "overlay_front": (255, 160),
+        "overlay_left": (397, 160),
+        "right_canine": (114, 300),
+        "protrusive": (255, 300),
+        "left_canine": (397, 300),
+        "centric_top": (144, 460),
+        "centric_bottom": (351, 460),
+    }.items():
+        red, green, blue, alpha = visual.pixelColor(x, y).getRgb()
+        is_capture = alpha > 0 and all(
+            abs(actual - expected) <= 3
+            for actual, expected in zip((red, green, blue), (38, 57, 68))
+        )
+        assert is_capture == (captures[key] is not None), key
     document.close()
