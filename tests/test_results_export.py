@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import os
 
 import pytest
@@ -149,10 +150,14 @@ def test_visual_page_has_eight_clinical_positions(snapshot) -> None:
     assert html.count("Posición no registrada") >= 2
 
 
+@pytest.mark.parametrize("capture_mode", ["mixed", "all", "none"])
+@pytest.mark.parametrize("all_limits", [False, True])
 def test_pdf_with_visual_captures_has_two_pages(
     tmp_path,
     snapshot,
     qt_application,
+    capture_mode,
+    all_limits,
 ) -> None:
     capture = tmp_path / "capture.png"
     image = QImage(960, 720, QImage.Format.Format_RGB32)
@@ -168,6 +173,20 @@ def test_pdf_with_visual_captures_has_two_pages(
         "centric_top": capture,
         "centric_bottom": capture,
     }
+    if capture_mode != "mixed":
+        captures = {
+            key: capture if capture_mode == "all" else None
+            for key in captures
+        }
+    if all_limits:
+        snapshot = replace(snapshot, functional_limits=tuple(
+            {**snapshot.functional_limits[0], "kind": kind}
+            for kind in (
+                "protrusive_edge_to_edge",
+                "right_canine_cusp_to_cusp",
+                "left_canine_cusp_to_cusp",
+            )
+        ))
     path = tmp_path / "visual-results.pdf"
 
     ResultsExporter.export_pdf(
@@ -179,3 +198,19 @@ def test_pdf_with_visual_captures_has_two_pages(
     document = QPdfDocument()
     assert document.load(str(path)) == QPdfDocument.Error.None_
     assert document.pageCount() == 2
+    results_text = document.getAllText(0).text()
+    visual_text = document.getAllText(1).text()
+    assert "Cóndilo izquierdo" in results_text
+    assert "0.8775 mm" in results_text
+    for title in (
+        "Vista derecha", "Vista frontal", "Vista izquierda",
+        "Canina derecha", "Borde a borde", "Canina izquierda",
+        "RC - vista superior", "RC - vista inferior",
+        "Las vistas fueron generadas automáticamente",
+    ):
+        assert title in visual_text
+    # The declared 14 mm PDF margin must not acquire Qt's extra 2 cm margin.
+    title_bounds = document.getAllText(0).boundingRectangle()
+    assert 35 < title_bounds.left() < 45
+    assert 35 < title_bounds.top() < 50
+    document.close()
