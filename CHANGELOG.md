@@ -10,6 +10,24 @@ This project follows Semantic Versioning.
 
 ---
 
+# [0.1.0a2] - 2026-11-26
+
+## Changed
+
+- RC–MIC clinical results now use the AD2 MCD convention: X sagittal
+  (+anterior), Y transverse (+patient right), Z vertical (+inferior).
+- The diagnosis panel, result-tree tooltips, PDF and CSV use the same
+  conversion. CSV exports identify their convention as AD2_MCD.
+- Existing studies retain their anatomical geometry and stored vectors;
+  displacement magnitudes and registration results are unchanged.
+
+## Fixed
+
+- Preserve the PDF pagination correction for consistent two-page visual
+  reports on Windows and Linux.
+
+---
+
 # [0.1.0-alpha] - 2026-07-18
 
 ## Added
@@ -70,3 +88,4 @@ This project follows Semantic Versioning.
 # Versioning Strategy
 
 OGDD follows semantic versioning:
+

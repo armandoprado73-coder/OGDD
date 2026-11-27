@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from ogdd.geometry.mcd_axes import MCD_AXES_DESCRIPTION, anatomical_to_mcd
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -296,7 +297,7 @@ class RcMicDiagnosisPanel(QWidget):
         right_vector,
         left_vector,
     ) -> None:
-        """Display registration quality and local condylar vectors."""
+        """Display anatomical input vectors using the clinical MCD convention."""
 
         right_vector = np.asarray(right_vector, dtype=float)
         left_vector = np.asarray(left_vector, dtype=float)
@@ -318,8 +319,7 @@ class RcMicDiagnosisPanel(QWidget):
         )
         self.left_vector_value.setText(self._format_vector(left_vector))
         self.state_label.setText(
-            "Diagnóstico calculado en ejes anatómicos: "
-            "+X derecha, +Y anterior, +Z superior."
+            "Diagnóstico RC → MIC. " + MCD_AXES_DESCRIPTION
         )
         self._set_state_style(ready=registration.converged)
         self.view_overlay_button.setChecked(True)
@@ -387,6 +387,7 @@ class RcMicDiagnosisPanel(QWidget):
 
     @staticmethod
     def _format_vector(vector: np.ndarray) -> str:
+        vector = anatomical_to_mcd(vector)
         return (
             f"X {vector[0]:+.4f}  |  "
             f"Y {vector[1]:+.4f}  |  "

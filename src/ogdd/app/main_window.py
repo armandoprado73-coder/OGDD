@@ -55,6 +55,7 @@ from ogdd.articulator.occlusal_closure_controller import (
     OcclusalClosureController,
 )
 from ogdd.io.stl import STLReader
+from ogdd.geometry.mcd_axes import MCD_AXES_DESCRIPTION, anatomical_to_mcd
 from ogdd.registration.centric_relation_registration import (
     CentricRelationRegistration,
 )
@@ -1540,7 +1541,7 @@ class MainWindow(QMainWindow):
             self._set_rc_mic_diagnostic_view("overlay")
             self.scene.plotter.render()
             self.statusBar().showMessage(
-                "Diagnóstico RC–MIC calculado — vectores expresados en X/Y/Z"
+                "Diagnóstico RC–MIC calculado — " + MCD_AXES_DESCRIPTION
             )
             self._state_changed()
         except (TypeError, ValueError) as error:
@@ -1636,12 +1637,13 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _format_diagnostic_vector(vector: np.ndarray) -> str:
-        """Format one local RC-to-MIC vector for the results tree."""
+        """Format an anatomical RC-to-MIC vector in clinical MCD axes."""
 
+        vector = anatomical_to_mcd(vector)
         return (
             f"X {vector[0]:+.4f} mm | "
             f"Y {vector[1]:+.4f} mm | "
-            f"Z {vector[2]:+.4f} mm"
+            f"Z {vector[2]:+.4f} mm | {MCD_AXES_DESCRIPTION}"
         )
 
     def _results_snapshot(self) -> StudyResultsSnapshot:

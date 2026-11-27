@@ -66,15 +66,16 @@ def snapshot() -> StudyResultsSnapshot:
     )
 
 
-def test_csv_rows_have_stable_anatomical_axes(snapshot) -> None:
+def test_csv_rows_identify_mcd_axes(snapshot) -> None:
     rows = ResultsExporter.csv_rows(snapshot)
 
-    assert ("axes", "positive_x", "patient right", "") in rows
-    assert ("axes", "positive_y", "anterior", "") in rows
-    assert ("axes", "positive_z", "superior", "") in rows
+    assert ("axes", "convention", "AD2_MCD", "") in rows
+    assert ("axes", "positive_x", "anterior", "") in rows
+    assert ("axes", "positive_y", "patient right", "") in rows
+    assert ("axes", "positive_z", "inferior", "") in rows
 
 
-def test_csv_export_preserves_numeric_result_values(tmp_path, snapshot) -> None:
+def test_csv_export_converts_components_and_preserves_rmse(tmp_path, snapshot) -> None:
     path = tmp_path / "results.csv"
 
     ResultsExporter.export_csv(path, snapshot)
@@ -88,7 +89,7 @@ def test_csv_export_preserves_numeric_result_values(tmp_path, snapshot) -> None:
     assert right_x == {
         "section": "rc_mic",
         "metric": "right_x",
-        "value": "0.1",
+        "value": "-0.2",
         "unit": "mm",
     }
     assert mandibular_rmse["value"] == "0.00202872"
@@ -106,8 +107,32 @@ def test_pdf_html_escapes_study_name_and_lists_diagnosis(snapshot) -> None:
 
     assert "Paciente &lt;A&amp;B&gt;" in html
     assert "Diagnóstico RC - MIC" in html
-    assert "X +0.1000 mm" in html
+    assert "X -0.2000 mm, Y +0.1000 mm, Z -0.3000 mm" in html
+    assert "X +0.5000 mm, Y -0.4000 mm, Z +0.6000 mm" in html
+    assert "+X anterior, +Y derecha del paciente, +Z inferior" in html
     assert "RMSE mandibular" in html
+
+
+def test_exports_convert_each_time_without_mutating_stored_vectors(snapshot):
+    original = {side: list(snapshot.rc_mic[f"{side}_vector_mm"])
+                for side in ("right", "left")}
+    first = ResultsExporter.csv_rows(snapshot)
+    ResultsExporter.pdf_html(snapshot)
+    assert ResultsExporter.csv_rows(snapshot) == first
+    for side, vector in original.items():
+        assert snapshot.rc_mic[f"{side}_vector_mm"] == vector
+
+
+def test_csv_and_pdf_share_mcd_components_and_keep_magnitudes(snapshot):
+    rows = {(section, metric): value for section, metric, value, _
+            in ResultsExporter.csv_rows(snapshot)}
+    for side, expected in (("right", [-0.2, 0.1, -0.3]),
+                           ("left", [0.5, -0.4, 0.6])):
+        assert [rows[("rc_mic", f"{side}_{axis}")]
+                for axis in "xyz"] == expected
+        assert rows[("rc_mic", f"{side}_distance")] == (
+            snapshot.rc_mic[f"{side}_distance_mm"]
+        )
 
 
 def test_pdf_export_creates_valid_pdf_header(
