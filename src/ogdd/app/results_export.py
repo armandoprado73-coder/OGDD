@@ -9,6 +9,8 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
+from ogdd.geometry.mcd_axes import MCD_AXES_DESCRIPTION, anatomical_to_mcd
+
 from PySide6.QtCore import QMarginsF, QSizeF, QUrl
 from PySide6.QtGui import (
     QImage,
@@ -21,7 +23,11 @@ from PySide6.QtGui import (
 
 @dataclass(frozen=True)
 class StudyResultsSnapshot:
-    """Serializable clinical summary used by every point-7 export."""
+    """Serializable clinical summary used by every point-7 export.
+
+    RC-MIC vectors remain in OGDD anatomical axes for compatibility with
+    existing studies. Exporters convert them to clinical MCD components.
+    """
 
     study_name: str
     source_files: dict[str, str] = field(default_factory=dict)
@@ -56,9 +62,10 @@ class ResultsExporter:
         rows: list[tuple[str, str, Any, str]] = [
             ("study", "name", snapshot.study_name, ""),
             ("study", "generated_at_utc", snapshot.generated_at_utc, ""),
-            ("axes", "positive_x", "patient right", ""),
-            ("axes", "positive_y", "anterior", ""),
-            ("axes", "positive_z", "superior", ""),
+            ("axes", "convention", "AD2_MCD", ""),
+            ("axes", "positive_x", "anterior", ""),
+            ("axes", "positive_y", "patient right", ""),
+            ("axes", "positive_z", "inferior", ""),
         ]
         for key, value in sorted(snapshot.source_files.items()):
             rows.append(("source_files", key, value, ""))
@@ -157,7 +164,7 @@ class ResultsExporter:
                 ]
             )
             for side in ("right", "left"):
-                vector = diagnosis[f"{side}_vector_mm"]
+                vector = anatomical_to_mcd(diagnosis[f"{side}_vector_mm"])
                 rows.extend(
                     [
                         ("rc_mic", f"{side}_x", vector[0], "mm"),
@@ -409,8 +416,8 @@ class ResultsExporter:
         </head>
         <body>
             {header}
-            <div class="axes"><b>Ejes anatómicos:</b> +X derecha del paciente,
-            +Y anterior, +Z superior.</div>
+            <div class="axes"><b>Diagnóstico RC → MIC:</b>
+            {escape(MCD_AXES_DESCRIPTION)}</div>
             {''.join(sections)}
             <div class="footer">Generado en UTC: {escape(snapshot.generated_at_utc)}<br>
             El informe conserva los valores geométricos calculados por OGDD.</div>
@@ -580,6 +587,7 @@ class ResultsExporter:
 
     @staticmethod
     def _vector_text(vector: list[float], distance: float) -> str:
+        vector = anatomical_to_mcd(vector)
         return (
             f"X {vector[0]:+.4f} mm, Y {vector[1]:+.4f} mm, "
             f"Z {vector[2]:+.4f} mm; magnitud {distance:.4f} mm"

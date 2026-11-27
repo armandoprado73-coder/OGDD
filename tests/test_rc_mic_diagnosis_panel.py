@@ -135,7 +135,7 @@ def test_diagnose_request_requires_both_seeds(qt_application) -> None:
     assert diagnose_spy.count() == 1
 
 
-def test_panel_reports_registration_and_local_vectors(qt_application) -> None:
+def test_panel_reports_registration_and_mcd_vectors(qt_application) -> None:
     panel = RcMicDiagnosisPanel()
     panel.set_prerequisites(mic_available=True, mounting_available=True)
     panel.show_seed("maxillary", 1, [0.0, 0.0, 1.0])
@@ -152,15 +152,16 @@ def test_panel_reports_registration_and_local_vectors(qt_application) -> None:
     assert panel.mandibular_rmse_value.text() == "0.002029 mm"
     assert panel.right_distance_value.text() == "0.4356 mm"
     assert panel.right_vector_value.text() == (
-        "X +0.1235  |  Y -0.2346  |  Z +0.3457 mm"
+        "X -0.2346  |  Y +0.1235  |  Z -0.3457 mm"
     )
     assert panel.left_distance_value.text() == "0.4157 mm"
     assert panel.left_vector_value.text() == (
-        "X -0.1111  |  Y +0.2222  |  Z -0.3333 mm"
+        "X +0.2222  |  Y -0.1111  |  Z +0.3333 mm"
     )
-    assert "+X derecha" in panel.state_label.text()
-    assert "+Y anterior" in panel.state_label.text()
-    assert "+Z superior" in panel.state_label.text()
+    assert "MCD (AD2)" in panel.state_label.text()
+    assert "+X anterior" in panel.state_label.text()
+    assert "+Y derecha" in panel.state_label.text()
+    assert "+Z inferior" in panel.state_label.text()
     assert panel.view_rc_button.isEnabled()
     assert panel.view_mic_button.isEnabled()
     assert panel.view_overlay_button.isEnabled()

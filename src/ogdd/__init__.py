@@ -19,7 +19,7 @@ __description__ = (
     "Computational geometry tools for digital dentistry."
 )
 
-__version__ = "0.1.0-alpha"
+__version__ = "0.1.0a2"
 
 __author__ = "Armando Prado"
 
@@ -49,3 +49,4 @@ __all__ = [
     "__version__",
     "__author__",
 ]
+
